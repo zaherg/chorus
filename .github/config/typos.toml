@@ -1,0 +1,29 @@
+# reference https://github.com/crate-ci/typos/blob/master/docs/reference.md
+
+[files]
+ignore-files = true
+ignore-hidden = true
+ignore-vcs = true
+ignore-dot = true
+extend-exclude = [
+	".git/",
+]
+
+[default]
+check-filename = true
+locale = "en"
+# Add regex patterns for ignoring text blocks
+extend-ignore-re = [
+    # Ignore lines that end with `# spellchecker:disable-line`
+    "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
+    # Ignore the line after `# spellchecker:ignore-next-line`:
+    "(#|//)\\s*spellchecker:ignore-next-line\\n.*",
+    # Ignore blocks between `# spellchecker:off` and `# spellchecker:on`
+    "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on",
+]
+
+# Add specific word exceptions
+[default.extend-words]
+# Format: incorrect_word = "correct_word"
+# To mark a word as always valid, set it equal to itself
+uncomplete = "uncomplete"

@@ -1,0 +1,13 @@
+# Exclude from git archive / export
+.github/            export-ignore
+docs/               export-ignore
+dist/               export-ignore
+tests/              export-ignore
+*.test.ts           export-ignore
+.gitattributes      export-ignore
+AGENTS.md           export-ignore
+biome.json          export-ignore
+CLAUDE.md           export-ignore
+DISCLAIMER.md       export-ignore
+RELEASING.md        export-ignore
+SECURITY.md         export-ignore

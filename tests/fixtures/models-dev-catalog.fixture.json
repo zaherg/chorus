@@ -1,0 +1,196 @@
+{
+    "models": {
+        "openai/gpt-5.2": {
+            "id": "gpt-5.2",
+            "name": "GPT-5.2",
+            "provider": "openai",
+            "family": "gpt-5",
+            "release_date": "2026-01-15"
+        },
+        "anthropic/claude-sonnet-4.5": {
+            "id": "claude-sonnet-4.5",
+            "name": "Claude Sonnet 4.5",
+            "provider": "anthropic",
+            "family": "claude-sonnet",
+            "release_date": "2026-02-01"
+        },
+        "openrouter/anthropic/claude-sonnet-4.5": {
+            "id": "anthropic/claude-sonnet-4.5",
+            "name": "Claude Sonnet 4.5 (OpenRouter)",
+            "provider": "openrouter",
+            "family": "claude-sonnet",
+            "release_date": "2026-02-01"
+        },
+        "baseten/llama-3-1-8b": {
+            "id": "llama-3-1-8b",
+            "name": "Llama 3.1 8B",
+            "provider": "baseten",
+            "family": "llama",
+            "release_date": "2026-03-01"
+        },
+        "deepseek/deepseek-chat": {
+            "id": "deepseek-chat",
+            "name": "DeepSeek Chat",
+            "provider": "deepseek",
+            "family": "deepseek-chat",
+            "release_date": "2026-03-01"
+        },
+        "fireworks/accounts/fireworks/models/llama-v3p1-8b-instruct": {
+            "id": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+            "name": "Llama 3.1 8B Instruct",
+            "provider": "fireworks",
+            "family": "llama",
+            "release_date": "2026-03-01"
+        },
+        "huggingface/meta-llama/Llama-3.1-8B-Instruct": {
+            "id": "meta-llama/Llama-3.1-8B-Instruct",
+            "name": "Llama 3.1 8B Instruct",
+            "provider": "huggingface",
+            "family": "llama",
+            "release_date": "2026-03-01"
+        }
+    },
+    "providers": {
+        "openai": {
+            "models": {
+                "gpt-5.2": {
+                    "name": "GPT-5.2",
+                    "limit": {
+                        "context": 256000,
+                        "output": 16384
+                    },
+                    "reasoning": true,
+                    "tool_call": true,
+                    "structured_output": true,
+                    "modalities": {
+                        "input": ["text", "image"],
+                        "output": ["text"]
+                    },
+                    "release_date": "2026-01-15"
+                },
+                "gpt-5-mini": {
+                    "name": "GPT-5 Mini",
+                    "limit": {
+                        "context": 128000,
+                        "output": 16384
+                    },
+                    "reasoning": false,
+                    "tool_call": true,
+                    "structured_output": true
+                }
+            }
+        },
+        "anthropic": {
+            "models": {
+                "claude-sonnet-4.5": {
+                    "name": "Claude Sonnet 4.5",
+                    "limit": {
+                        "context": 200000,
+                        "output": 8192
+                    },
+                    "reasoning": true,
+                    "tool_call": true,
+                    "structured_output": false,
+                    "modalities": {
+                        "input": ["text", "image"],
+                        "output": ["text"]
+                    }
+                },
+                "claude-haiku-4.5": {
+                    "name": "Claude Haiku 4.5",
+                    "limit": {
+                        "context": 200000,
+                        "output": 8192
+                    },
+                    "reasoning": false,
+                    "tool_call": true,
+                    "structured_output": false
+                }
+            }
+        },
+        "openrouter": {
+            "models": {
+                "anthropic/claude-sonnet-4.5": {
+                    "name": "Claude Sonnet 4.5 (OpenRouter)",
+                    "limit": {
+                        "context": 200000,
+                        "output": 8192
+                    },
+                    "reasoning": true,
+                    "tool_call": true,
+                    "structured_output": false
+                }
+            }
+        },
+        "vercel": {
+            "models": {
+                "v0-1.5": {
+                    "name": "v0 1.5",
+                    "limit": {
+                        "context": 128000,
+                        "output": 8192
+                    },
+                    "reasoning": false,
+                    "tool_call": true,
+                    "structured_output": true
+                }
+            }
+        },
+        "baseten": {
+            "models": {
+                "llama-3-1-8b": {
+                    "name": "Llama 3.1 8B",
+                    "limit": {
+                        "context": 128000,
+                        "output": 8192
+                    },
+                    "reasoning": false,
+                    "tool_call": true,
+                    "structured_output": false
+                }
+            }
+        },
+        "deepseek": {
+            "models": {
+                "deepseek-chat": {
+                    "name": "DeepSeek Chat",
+                    "limit": {
+                        "context": 128000,
+                        "output": 8192
+                    },
+                    "reasoning": true,
+                    "tool_call": true,
+                    "structured_output": true
+                }
+            }
+        },
+        "fireworks": {
+            "models": {
+                "accounts/fireworks/models/llama-v3p1-8b-instruct": {
+                    "name": "Llama 3.1 8B Instruct",
+                    "limit": {
+                        "context": 128000,
+                        "output": 8192
+                    },
+                    "reasoning": false,
+                    "tool_call": true,
+                    "structured_output": false
+                }
+            }
+        },
+        "huggingface": {
+            "models": {
+                "meta-llama/Llama-3.1-8B-Instruct": {
+                    "name": "Llama 3.1 8B Instruct",
+                    "limit": {
+                        "context": 128000,
+                        "output": 8192
+                    },
+                    "reasoning": false,
+                    "tool_call": true,
+                    "structured_output": false
+                }
+            }
+        }
+    }
+}

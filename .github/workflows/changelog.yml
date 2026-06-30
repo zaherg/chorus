@@ -1,0 +1,63 @@
+name: Changelog
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release version without the leading v (e.g. 1.0.0)"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="$INPUT_VERSION"
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./package.json').version")"
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "Using release version: $version"
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: ${{ github.workspace }}/.github/config/cliff.toml
+          args: --tag v${{ steps.version.outputs.value }} --unreleased --strip header
+          github_token: ${{ secrets.GH_PUBLIC_TOKEN || secrets.GITHUB_TOKEN }}
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Commit changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No changelog changes to commit"
+          else
+            git commit -m "chore: update changelog for v${{ steps.version.outputs.value }}"
+            git push origin main
+          fi
