@@ -7,7 +7,7 @@ Chorus is a collection of AI Agent Skills hosted in a single repository. It ship
 
 The CLI queries multiple AI model providers in parallel and returns raw responses, allowing your coding agent to compare, combine, and synthesize a final recommendation. This reduces model-specific bias and single-model blind spots.
 
-![Demo](./assets/Chorus.webm)
+[![Demo](./assets/Chorus.png)](./assets/Chorus.mp4)
 
 ## Prerequisites
 
