@@ -1,6 +1,16 @@
 
-## [0.0.6] - 2026-07-12
+## [0.0.7] - 2026-07-12
+
+### Changed
+
+- Update the workflow permission.
 
 ### Other
 
-- Update changelog workflow.
+- Initial work.
+- Bump version to 0.0.7.
+
+### Removed
+
+- Remove deadlock code in changelog workflow.
+- Remove deadlock code.
