@@ -14,14 +14,14 @@ The CLI queries multiple AI model providers in parallel and returns raw response
 - **Node.js 18+** or **Bun 1.3.14+** (required for source builds)
 - **npx** (ships with Node.js, needed for the skills CLI install path)
 - **macOS or Linux** (Windows support is not yet tested)
-At least one API key from a supported provider
+- At least one API key from a supported provider
 
 ## Quick Start
 
 After installation, open your code agent and prompt it something like:
 
 ```text
-lets ask gpt-4o and claude-sonnet-4 to help me decide if I Should use PostgreSQL or SQLite for a single-user desktop app?
+Let's ask gpt-4o and claude-sonnet-4 to help me decide if I should use PostgreSQL or SQLite for a single-user desktop app.
 ```
 
 The CLI returns raw model responses, which your coding agent processes to produce a synthesized recommendation.
@@ -38,13 +38,13 @@ The CLI returns raw model responses, which your coding agent processes to produc
 | **Output** | JSON array of raw model responses + metadata | One final message from the outer model (judge's structured analysis is internal) |
 | **Cost model** | N× single call (N = models you requested) | ~4–5× single call (3 panel + 1 judge + outer model) |
 | **Use case** | "Show me what each model thinks so I can synthesize" | "Let the models deliberate and give me the best answer" |
-| **Transparency** | Full — every model's complete response is visible | Opaque — you see the final answer, not panel raw outputs |
+| **Transparency** | Full: every model's complete response is visible | Opaque: you see the final answer, not panel raw outputs |
 | **Web search / fetch** | Not built in (agent could add separately) | Panel models and judge each have `openrouter:web_search` and `openrouter:web_fetch` enabled |
 | **Recursion protection** | N/A (one-shot fan-out) | `x-openrouter-fusion-depth` header prevents recursive invocation |
 | **Presets** | N/A | `openrouter/fusion-flash` pre-tunes panel for low-latency agentic turns |
 | **Temperature** | Same temperature for all models | Panel runs at configurable temperature; judge always runs at temperature 0 |
 
-Chorus is a transparent fan-out broker — you see every model's raw response. Fusion is an opinionated deliberation pipeline that adds a structured comparison step and lets the outer model synthesize, at the cost of opacity into panel outputs.
+Chorus is a transparent fan-out broker: you see every model's raw response. Fusion is an opinionated deliberation pipeline that adds a structured comparison step and lets the outer model synthesize, at the cost of opacity into panel outputs.
 
 ## Install
 
@@ -129,8 +129,7 @@ The skills follow the [Agent Skills specification](https://agentskills.io/specif
 
 ### delegate
 
-[`skills/delegate/`](./skills/delegate/SKILL.md) shells out to local CLI coding agents for focused sub-tasks or parallel independent work. It targets locally-installed agents only: Claude Code, Codex, OpenCode, and GitHub Copilot. If an agent is not installed on the machine, delegate does not run it.
-If an agent is not installed on the machine, delegate does not run it.
+[`skills/delegate/`](./skills/delegate/SKILL.md) shells out to local CLI coding agents for focused subtasks or parallel independent work. It targets locally installed agents only: Claude Code, Codex, OpenCode, and GitHub Copilot. If an agent is not installed on the machine, delegate does not run it.
 
 ## Development
 
