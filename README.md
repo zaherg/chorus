@@ -12,7 +12,7 @@ The CLI queries multiple AI model providers in parallel and returns raw response
 - **Node.js 18+** or **Bun 1.3.14+** (required for source builds)
 - **npx** (ships with Node.js, needed for the skills CLI install path)
 - **macOS or Linux** (Windows support is not yet tested)
-- At least one API key from a supported provider
+At least one API key from a supported provider
 
 ## Quick Start
 
@@ -23,6 +23,22 @@ chorus --models openai/gpt-4o,anthropic/claude-sonnet-4 "Should I use PostgreSQL
 ```
 
 The CLI returns raw model responses as JSON, which your coding agent processes to produce a synthesized recommendation.
+
+## Comparison: Chorus Consensus vs OpenRouter Fusion
+
+| Aspect | Chorus Consensus | OpenRouter Fusion |
+|--------|------------------|-------------------|
+| **Who initiates** | You/agent explicitly request parallel calls | Your model calls a tool (`openrouter:fusion`) |
+| **Model selection** | Arbitrary list per request (`--models a,b,c`) | Fixed panel (configurable via plugin) |
+| **Deliberation** | All models answer in parallel | Panel answers → Judge analyzes → Single synthesized answer |
+| **Synthesis** | Done by *your agent* (or human) with full context | Done *inside* the pipeline by a judge model |
+| **Control** | Deterministic fan-out every call | Model decides when to invoke (unless `tool_choice: required`) |
+| **Output** | JSON array of raw model responses + metadata | One final message (judge's analysis + outer model's answer) |
+| **Cost model** | N× single call (N = models you requested) | ~4–5× single call (3 panel + 1 judge + outer) |
+| **Use case** | "Show me what each model thinks so I can synthesize" | "Let the models deliberate and give me the best answer" |
+| **Transparency** | Full — every model's complete response is visible | Opaque — you see the final answer, not panel raw outputs |
+
+Chorus is a transparent fan-out broker; Fusion is an opinionated deliberation pipeline.
 
 ## Install
 
@@ -108,22 +124,7 @@ The skills follow the [Agent Skills specification](https://agentskills.io/specif
 ### delegate
 
 [`skills/delegate/`](./skills/delegate/SKILL.md) shells out to local CLI coding agents for focused sub-tasks or parallel independent work. It targets locally-installed agents only: Claude Code, Codex, OpenCode, and GitHub Copilot. If an agent is not installed on the machine, delegate does not run it.
-
-## Comparison: Chorus Consensus vs OpenRouter Fusion
-
-| Aspect | Chorus Consensus | OpenRouter Fusion |
-|--------|------------------|-------------------|
-| **Who initiates** | You/agent explicitly request parallel calls | Your model calls a tool (`openrouter:fusion`) |
-| **Model selection** | Arbitrary list per request (`--models a,b,c`) | Fixed panel (configurable via plugin) |
-| **Deliberation** | All models answer in parallel | Panel answers → Judge analyzes → Single synthesized answer |
-| **Synthesis** | Done by *your agent* (or human) with full context | Done *inside* the pipeline by a judge model |
-| **Control** | Deterministic fan-out every call | Model decides when to invoke (unless `tool_choice: required`) |
-| **Output** | JSON array of raw model responses + metadata | One final message (judge's analysis + outer model's answer) |
-| **Cost model** | N× single call (N = models you requested) | ~4–5× single call (3 panel + 1 judge + outer) |
-| **Use case** | "Show me what each model thinks so I can synthesize" | "Let the models deliberate and give me the best answer" |
-| **Transparency** | Full — every model's complete response is visible | Opaque — you see the final answer, not panel raw outputs |
-
-Chorus is a transparent fan-out broker; Fusion is an opinionated deliberation pipeline.
+If an agent is not installed on the machine, delegate does not run it.
 
 ## Development
 
