@@ -7,7 +7,7 @@ Chorus is a collection of AI Agent Skills hosted in a single repository. It ship
 
 The CLI queries multiple AI model providers in parallel and returns raw responses, allowing your coding agent to compare, combine, and synthesize a final recommendation. This reduces model-specific bias and single-model blind spots.
 
-[![Demo](./assets/Chorus.png)](./assets/Chorus.mp4)
+![Demo](./assets/Chorus.webm)
 
 ## Prerequisites
 
@@ -18,10 +18,10 @@ At least one API key from a supported provider
 
 ## Quick Start
 
-After installation, run a consensus query:
+After installation, open your code agent and prompt it something like:
 
-```bash
-chorus --models openai/gpt-4o,anthropic/claude-sonnet-4 "Should I use PostgreSQL or SQLite for a single-user desktop app?"
+```text
+lets ask gpt-4o and claude-sonnet-4 to help me decide if I Should use PostgreSQL or SQLite for a single-user desktop app?
 ```
 
 The CLI returns raw model responses as JSON, which your coding agent processes to produce a synthesized recommendation.
