@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CLI_VERSION="v0.0.6"
+CLI_VERSION="v0.0.7"
 REPO_URL="https://github.com/zaherg/chorus"
 VERIFY=1
 PREFIX=""
