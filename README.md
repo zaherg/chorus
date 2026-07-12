@@ -24,23 +24,27 @@ After installation, open your code agent and prompt it something like:
 lets ask gpt-4o and claude-sonnet-4 to help me decide if I Should use PostgreSQL or SQLite for a single-user desktop app?
 ```
 
-The CLI returns raw model responses as JSON, which your coding agent processes to produce a synthesized recommendation.
+The CLI returns raw model responses, which your coding agent processes to produce a synthesized recommendation.
 
 ## Comparison: Chorus Consensus vs OpenRouter Fusion
 
 | Aspect | Chorus Consensus | OpenRouter Fusion |
 |--------|------------------|-------------------|
-| **Who initiates** | You/agent explicitly request parallel calls | Your model calls a tool (`openrouter:fusion`) |
-| **Model selection** | Arbitrary list per request (`--models a,b,c`) | Fixed panel (configurable via plugin) |
-| **Deliberation** | All models answer in parallel | Panel answers → Judge analyzes → Single synthesized answer |
-| **Synthesis** | Done by *your agent* (or human) with full context | Done *inside* the pipeline by a judge model |
-| **Control** | Deterministic fan-out every call | Model decides when to invoke (unless `tool_choice: required`) |
-| **Output** | JSON array of raw model responses + metadata | One final message (judge's analysis + outer model's answer) |
-| **Cost model** | N× single call (N = models you requested) | ~4–5× single call (3 panel + 1 judge + outer) |
+| **Invocation** | Agent shells out to CLI from natural language ("ask gpt-4o and claude...") | Must be configured in the API request; model calls the tool or is forced via `tool_choice: "required"` |
+| **Model selection** | Arbitrary list per request (`--models a,b,c`) | Arbitrary list per request (`analysis_models`: 1–8 models) |
+| **Deliberation** | All models answer in parallel → Agent synthesizes the final answer | Panel answers in parallel → Judge compares (structured JSON: consensus, contradictions, coverage gaps, unique insights, blind spots) → Outer model writes final answer |
+| **Synthesis** | Done by *your agent* (or another model if you want to) with full context | Judge compares panel responses; outer model synthesizes the final answer from the judge's analysis |
+| **Control** | Deterministic fan-out every call | Model decides when to invoke (unless `tool_choice: "required"`) |
+| **Output** | JSON array of raw model responses + metadata | One final message from the outer model (judge's structured analysis is internal) |
+| **Cost model** | N× single call (N = models you requested) | ~4–5× single call (3 panel + 1 judge + outer model) |
 | **Use case** | "Show me what each model thinks so I can synthesize" | "Let the models deliberate and give me the best answer" |
 | **Transparency** | Full — every model's complete response is visible | Opaque — you see the final answer, not panel raw outputs |
+| **Web search / fetch** | Not built in (agent could add separately) | Panel models and judge each have `openrouter:web_search` and `openrouter:web_fetch` enabled |
+| **Recursion protection** | N/A (one-shot fan-out) | `x-openrouter-fusion-depth` header prevents recursive invocation |
+| **Presets** | N/A | `openrouter/fusion-flash` pre-tunes panel for low-latency agentic turns |
+| **Temperature** | Same temperature for all models | Panel runs at configurable temperature; judge always runs at temperature 0 |
 
-Chorus is a transparent fan-out broker; Fusion is an opinionated deliberation pipeline.
+Chorus is a transparent fan-out broker — you see every model's raw response. Fusion is an opinionated deliberation pipeline that adds a structured comparison step and lets the outer model synthesize, at the cost of opacity into panel outputs.
 
 ## Install
 
