@@ -47,11 +47,18 @@ To review a specific feature or issues:
 codex review "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts"
 ```
 
-With a specific model:
+With a specific model and low reasoning effort:
 
 
 ```bash
-codex review "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts" --model gpt-5.5
+codex review "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts" -m gpt-5.6-luna -c model_reasoning_effort=low
+```
+
+With a specific model and high reasoning effort:
+
+
+```bash
+codex review "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts" -m gpt-5.6-luna -c model_reasoning_effort=high
 ```
 
 
