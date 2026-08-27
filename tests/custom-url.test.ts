@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
     createSafeCustomFetch,
-    resolveAndValidateHostname,
     type DnsResolveFn,
+    resolveAndValidateHostname,
 } from "@/providers/custom-url";
 
 describe("resolveAndValidateHostname", () => {

@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { getConfigPaths } from "@/config";
+
 import { getRotatingFileSink } from "@logtape/file";
 import {
     configure,
@@ -10,6 +10,8 @@ import {
     type LogLevel as LogTapeLevel,
     type Sink,
 } from "@logtape/logtape";
+
+import { getConfigPaths } from "@/config";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 

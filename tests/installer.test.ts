@@ -8,8 +8,8 @@ import {
     stat,
     writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const repoRoot = new URL("..", import.meta.url).pathname;
 const installerPath = join(

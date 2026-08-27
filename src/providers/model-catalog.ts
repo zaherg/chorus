@@ -523,14 +523,15 @@ const buildProviderEntry = (
 // In-flight promise deduplicator: concurrent callers to loadCatalog
 // await the same shared promise, preventing cache-write races and
 // redundant parallel fetches from the upstream catalog URL.
-let loadCatalogDedup: Map<string, Promise<LoadCatalogResult>> = new Map();
+const loadCatalogDedup: Map<string, Promise<LoadCatalogResult>> = new Map();
 
 export const loadCatalog = async (
     options: LoadCatalogOptions,
 ): Promise<LoadCatalogResult> => {
     const dedupKey = `${options.configDir}::${!!options.forceRefresh}`;
-    if (loadCatalogDedup.has(dedupKey)) {
-        return loadCatalogDedup.get(dedupKey)!;
+    const inFlight = loadCatalogDedup.get(dedupKey);
+    if (inFlight !== undefined) {
+        return inFlight;
     }
 
     const impl = async (): Promise<LoadCatalogResult> => {
