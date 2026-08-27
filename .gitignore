@@ -2,6 +2,7 @@
 .mcp.json
 .agents/
 .serena/
+.codegraph/
 CLAUDE.md
 CLAUDE.local.md
 code/
