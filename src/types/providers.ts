@@ -8,29 +8,12 @@ import { z } from "zod/v4";
  * Consumers use this for discriminated unions and exhaustiveness checks.
  */
 export const providerIdValues = [
-    "alibaba", // Alibaba Cloud (Qwen models)
-    "amazon-bedrock", // Amazon Bedrock
-    "anthropic", // Anthropic (Claude models)
-    "azure", // Azure OpenAI Service
-    "baseten", // Baseten
-    "cerebras", // Cerebras Systems
-    "cohere", // Cohere
-    "custom", // User-defined custom provider (OpenAI-compatible endpoint)
-    "deepinfra", // DeepInfra
-    "deepseek", // DeepSeek
-    "fireworks", // Fireworks AI
-    "gateway", // Lit Protocol gateway models
-    "google", // Google AI (Gemini models)
-    "google-vertex", // Google Vertex AI
-    "groq", // Groq
-    "huggingface", // Hugging Face
-    "mistral", // Mistral AI
-    "openai", // OpenAI
-    "openrouter", // OpenRouter (multi-provider aggregator)
-    "perplexity", // Perplexity
-    "togetherai", // Together AI
-    "vercel", // Vercel AI
-    "xai", // xAI (Grok models)
+    "amazon-bedrock",
+    "anthropic",
+    "azure",
+    "custom",
+    "google-vertex",
+    "openrouter",
 ] as const;
 
 // === Zod schemas ===

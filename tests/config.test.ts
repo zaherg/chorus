@@ -3,6 +3,7 @@ import {
     chmodSync,
     mkdirSync,
     mkdtempSync,
+    readFileSync,
     rmSync,
     statSync,
     writeFileSync,
@@ -39,6 +40,70 @@ describe("loadConfig", () => {
         expect(config.max_concurrent_processes).toBe(3);
     });
 
+    it("writes only retained provider settings to the default config", async () => {
+        await loadConfig();
+
+        const configPath = join(tempDir, ".config", "chorus", "config.json");
+        const config = JSON.parse(readFileSync(configPath, "utf8")) as Record<
+            string,
+            unknown
+        >;
+
+        expect(Object.keys(config).sort()).toEqual(
+            [
+                "allow_insecure_custom",
+                "amazon_bedrock_api_key",
+                "anthropic_api_key",
+                "azure_api_key",
+                "cli_timeout_ms",
+                "custom_api_key",
+                "custom_url",
+                "google_vertex_api_key",
+                "log_level",
+                "max_concurrent_processes",
+                "openrouter_api_key",
+                "provider_timeout_ms",
+            ].sort(),
+        );
+    });
+
+    it("silently strips removed provider keys without warning", async () => {
+        const configDir = join(tempDir, ".config", "chorus");
+        mkdirSync(configDir, { recursive: true });
+        writeFileSync(
+            join(configDir, "config.json"),
+            JSON.stringify({
+                openrouter_api_key: "sk-openrouter-key",
+                openai_api_key: "sk-removed-key",
+            }),
+        );
+
+        const { result, stderr } = await (async () => {
+            const originalStderrWrite = process.stderr.write.bind(
+                process.stderr,
+            );
+            const lines: string[] = [];
+            process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+                lines.push(
+                    typeof chunk === "string"
+                        ? chunk
+                        : new TextDecoder().decode(chunk),
+                );
+                return true;
+            }) as typeof process.stderr.write;
+            try {
+                const config = await loadConfig();
+                return { result: config, stderr: lines.join("") };
+            } finally {
+                process.stderr.write = originalStderrWrite;
+            }
+        })();
+
+        expect(result.openrouter_api_key).toBe("sk-openrouter-key");
+        expect(result).not.toHaveProperty("openai_api_key");
+        expect(stderr).not.toContain("openai");
+    });
+
     it("creates default config.json and config directory with private permissions", async () => {
         if (!supportsPosixModes) {
             await loadConfig();
@@ -71,7 +136,7 @@ describe("loadConfig", () => {
             configPath,
             JSON.stringify({
                 log_level: "debug",
-                openai_api_key: "sk-test-key",
+                openrouter_api_key: "sk-test-key",
             }),
         );
         chmodSync(configDir, 0o777);
@@ -80,7 +145,7 @@ describe("loadConfig", () => {
         const config = await loadConfig();
 
         expect(config.log_level).toBe("debug");
-        expect(config.openai_api_key).toBe("sk-test-key");
+        expect(config.openrouter_api_key).toBe("sk-test-key");
         expect(modeOf(configDir)).toBe(0o700);
         expect(modeOf(configPath)).toBe(0o600);
     });
@@ -93,14 +158,14 @@ describe("loadConfig", () => {
             JSON.stringify({
                 cli_timeout_ms: 60_000,
                 log_level: "debug",
-                openai_api_key: "sk-test-key",
+                openrouter_api_key: "sk-test-key",
             }),
         );
 
         const config = await loadConfig();
         expect(config.cli_timeout_ms).toBe(60_000);
         expect(config.log_level).toBe("debug");
-        expect(config.openai_api_key).toBe("sk-test-key");
+        expect(config.openrouter_api_key).toBe("sk-test-key");
         expect(config.provider_timeout_ms).toBe(120_000);
     });
 
@@ -111,12 +176,12 @@ describe("loadConfig", () => {
         writeFileSync(
             join(configDir, "config.json"),
             JSON.stringify({
-                openai_api_key: "$TEST_API_KEY",
+                openrouter_api_key: "$TEST_API_KEY",
             }),
         );
 
         const config = await loadConfig();
-        expect(config.openai_api_key).toBe("resolved-value");
+        expect(config.openrouter_api_key).toBe("resolved-value");
         delete process.env.TEST_API_KEY;
     });
 
@@ -126,12 +191,12 @@ describe("loadConfig", () => {
         writeFileSync(
             join(configDir, "config.json"),
             JSON.stringify({
-                openai_api_key: "$MISSING_VAR",
+                openrouter_api_key: "$MISSING_VAR",
             }),
         );
 
         const config = await loadConfig();
-        expect(config.openai_api_key).toBe("$MISSING_VAR");
+        expect(config.openrouter_api_key).toBe("$MISSING_VAR");
     });
 
     it("fails validation when custom_url is set but custom_api_key is missing", async () => {

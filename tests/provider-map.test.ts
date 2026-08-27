@@ -4,61 +4,39 @@ import {
     getModelsDevProviderKey,
     isCatalogBackedProvider,
 } from "@/providers/provider-map";
-import type { ProviderId } from "@/types/providers";
+import { type ProviderId, providerIdValues } from "@/types/providers";
 
 const CATALOG_BACKED: ReadonlyArray<ProviderId> = [
-    "alibaba",
     "amazon-bedrock",
     "anthropic",
     "azure",
-    "baseten",
-    "cerebras",
-    "cohere",
-    "deepinfra",
-    "deepseek",
-    "fireworks",
-    "google",
     "google-vertex",
-    "groq",
-    "huggingface",
-    "mistral",
-    "openai",
     "openrouter",
-    "perplexity",
-    "togetherai",
-    "vercel",
-    "xai",
 ];
 
 const EXPECTED_KEYS: Readonly<Record<ProviderId, string | undefined>> = {
-    alibaba: "alibaba",
     "amazon-bedrock": "amazon-bedrock",
     anthropic: "anthropic",
     azure: "azure",
-    baseten: "baseten",
-    cerebras: "cerebras",
-    cohere: "cohere",
     custom: undefined,
-    deepinfra: "deepinfra",
-    deepseek: "deepseek",
-    fireworks: "fireworks-ai",
-    gateway: undefined,
-    google: "google",
     "google-vertex": "google-vertex",
-    groq: "groq",
-    huggingface: "huggingface",
-    mistral: "mistral",
-    openai: "openai",
     openrouter: "openrouter",
-    perplexity: "perplexity",
-    togetherai: "togetherai",
-    vercel: "vercel",
-    xai: "xai",
 };
 
-const PASSTHROUGH: ReadonlyArray<ProviderId> = ["custom", "gateway"];
+const PASSTHROUGH: ReadonlyArray<ProviderId> = ["custom"];
 
 describe("provider-map", () => {
+    test("exports exactly the six retained provider IDs", () => {
+        expect(providerIdValues).toEqual([
+            "amazon-bedrock",
+            "anthropic",
+            "azure",
+            "custom",
+            "google-vertex",
+            "openrouter",
+        ]);
+    });
+
     describe("getModelsDevProviderKey", () => {
         test("returns the spec key for each catalog-backed provider", () => {
             for (const id of CATALOG_BACKED) {
@@ -68,12 +46,11 @@ describe("provider-map", () => {
 
         test("returns undefined for passthrough providers", () => {
             expect(getModelsDevProviderKey("custom")).toBeUndefined();
-            expect(getModelsDevProviderKey("gateway")).toBeUndefined();
         });
     });
 
     describe("isCatalogBackedProvider", () => {
-        test("returns true for the 21 catalog-backed providers", () => {
+        test("returns true for the 5 catalog-backed providers", () => {
             for (const id of CATALOG_BACKED) {
                 expect(isCatalogBackedProvider(id)).toBe(true);
             }
