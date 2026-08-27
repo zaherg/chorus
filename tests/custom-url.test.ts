@@ -82,10 +82,13 @@ describe("createSafeCustomFetch", () => {
 
         // Use Reflect.set to replace the global fetch used internally.
         const origFetch = globalThis.fetch;
-        globalThis.fetch = Object.assign(async () => {
-            wasCalled = true;
-            return response;
-        }, { preconnect: () => {} });
+        globalThis.fetch = Object.assign(
+            async () => {
+                wasCalled = true;
+                return response;
+            },
+            { preconnect: () => {} },
+        );
 
         try {
             const result = await safeFetch(request);
@@ -104,10 +107,13 @@ describe("createSafeCustomFetch", () => {
 
         let fetchCalled = false;
         const origFetch = globalThis.fetch;
-        globalThis.fetch = Object.assign(async () => {
-            fetchCalled = true;
-            return new Response("ok");
-        }, { preconnect: () => {} });
+        globalThis.fetch = Object.assign(
+            async () => {
+                fetchCalled = true;
+                return new Response("ok");
+            },
+            { preconnect: () => {} },
+        );
 
         try {
             await expect(
@@ -126,12 +132,15 @@ describe("createSafeCustomFetch", () => {
         const safeFetch = createSafeCustomFetch(dns);
 
         const origFetch = globalThis.fetch;
-        globalThis.fetch = Object.assign(async () => {
-            return new Response(null, {
-                status: 302,
-                headers: { location: "https://1.2.3.4/final" },
-            });
-        }, { preconnect: () => {} });
+        globalThis.fetch = Object.assign(
+            async () => {
+                return new Response(null, {
+                    status: 302,
+                    headers: { location: "https://1.2.3.4/final" },
+                });
+            },
+            { preconnect: () => {} },
+        );
 
         try {
             await expect(
