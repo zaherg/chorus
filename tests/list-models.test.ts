@@ -40,26 +40,25 @@ const fixtureProviders = (): Record<string, ProviderListEntry> => {
         supports_tools: true,
         supports_structured_output: true,
     });
-    const openaiModel = BrokerModelInfoSchema.parse({
-        route_id: "openai/gpt-5.2",
-        provider: "openai",
-        provider_model_id: "gpt-5.2",
+    const openrouterModel = BrokerModelInfoSchema.parse({
+        route_id: "openrouter/openai/gpt-5.2",
+        provider: "openrouter",
+        provider_model_id: "openai/gpt-5.2",
         display_name: "GPT-5.2",
         context_window: 128_000,
         supports_tools: true,
     });
-    const groqModel = BrokerModelInfoSchema.parse({
-        route_id: "groq/llama-3.3-70b",
-        provider: "groq",
-        provider_model_id: "llama-3.3-70b",
-        display_name: "Llama 3.3 70B",
+    const azureModel = BrokerModelInfoSchema.parse({
+        route_id: "azure/gpt-4o",
+        provider: "azure",
+        provider_model_id: "gpt-4o",
+        display_name: "GPT-4o",
     });
     return {
         anthropic: { status: "catalog", models: [anthropicModel] },
-        openai: { status: "catalog", models: [openaiModel] },
-        groq: { status: "catalog", models: [groqModel] },
-        xai: { status: "passthrough", models: [] },
-        gateway: { status: "passthrough", models: [] },
+        openrouter: { status: "catalog", models: [openrouterModel] },
+        azure: { status: "catalog", models: [azureModel] },
+        custom: { status: "passthrough", models: [] },
     };
 };
 
@@ -93,7 +92,7 @@ const stubLoadCatalog = (
 describe("runListModelsCommand", () => {
     it("emits a models.list/1 payload with only configured providers and cache metadata", async () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
-        stubConfiguredProviders(["anthropic", "openai"]);
+        stubConfiguredProviders(["anthropic", "openrouter"]);
 
         const { result, stdout } = await captureOutput(() =>
             runListModelsCommand(["--json"]),
@@ -107,12 +106,12 @@ describe("runListModelsCommand", () => {
         expect(typeof payload.cache.expires_at).toBe("string");
         expect(Object.keys(payload.providers).sort()).toEqual([
             "anthropic",
-            "openai",
+            "openrouter",
         ]);
         expect(payload.providers.anthropic.status).toBe("catalog");
         expect(payload.providers.anthropic.models).toHaveLength(1);
-        expect(payload.providers.openai.models[0].route_id).toBe(
-            "openai/gpt-5.2",
+        expect(payload.providers.openrouter.models[0].route_id).toBe(
+            "openrouter/openai/gpt-5.2",
         );
     });
 
@@ -126,16 +125,15 @@ describe("runListModelsCommand", () => {
         expect(result).toBe(0);
 
         const payload = JSON.parse(stdout);
-        expect(payload.providers).not.toHaveProperty("openai");
-        expect(payload.providers).not.toHaveProperty("groq");
-        expect(payload.providers).not.toHaveProperty("xai");
-        expect(payload.providers).not.toHaveProperty("gateway");
+        expect(payload.providers).not.toHaveProperty("openrouter");
+        expect(payload.providers).not.toHaveProperty("azure");
+        expect(payload.providers).not.toHaveProperty("custom");
         expect(Object.keys(payload.providers)).toEqual(["anthropic"]);
     });
 
     it("emits passthrough providers with status passthrough and empty models", async () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
-        stubConfiguredProviders(["xai"]);
+        stubConfiguredProviders(["custom"]);
 
         const { result, stdout } = await captureOutput(() =>
             runListModelsCommand(["--json"]),
@@ -143,7 +141,7 @@ describe("runListModelsCommand", () => {
         expect(result).toBe(0);
 
         const payload = JSON.parse(stdout);
-        expect(payload.providers.xai).toEqual({
+        expect(payload.providers.custom).toEqual({
             status: "passthrough",
             models: [],
         });
@@ -183,7 +181,9 @@ describe("runListModelsCommand", () => {
         // --refresh set -> forceRefresh: true
         {
             const { calls } = stubLoadCatalog(response);
-            const { result } = await captureOutput(() => runListModelsCommand(["--json", "--refresh"]));
+            const { result } = await captureOutput(() =>
+                runListModelsCommand(["--json", "--refresh"]),
+            );
             expect(result).toBe(0);
             expect(calls[0]?.forceRefresh).toBe(true);
         }
@@ -191,7 +191,9 @@ describe("runListModelsCommand", () => {
         // --refresh absent -> forceRefresh: false
         {
             const { calls } = stubLoadCatalog(response);
-            const { result } = await captureOutput(() => runListModelsCommand(["--json"]));
+            const { result } = await captureOutput(() =>
+                runListModelsCommand(["--json"]),
+            );
             expect(result).toBe(0);
             expect(calls[0]?.forceRefresh).toBe(false);
         }
@@ -199,7 +201,7 @@ describe("runListModelsCommand", () => {
 
     it("prints a human-readable summary containing configured provider names and a route id", async () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
-        stubConfiguredProviders(["anthropic", "openai"]);
+        stubConfiguredProviders(["anthropic", "openrouter"]);
 
         const { result, stdout } = await captureOutput(() =>
             runListModelsCommand([]),
@@ -207,7 +209,7 @@ describe("runListModelsCommand", () => {
         expect(result).toBe(0);
 
         expect(stdout).toContain("anthropic");
-        expect(stdout).toContain("openai");
+        expect(stdout).toContain("openrouter");
         expect(stdout).toContain("anthropic/claude-3-5-sonnet");
         expect(stdout).toContain("cache:");
     });

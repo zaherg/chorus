@@ -20,14 +20,14 @@ mock.module("@/utils/logger", () => ({
 
 const fixtureModels = (): ModelsListResponse => {
     const openaiModel = BrokerModelInfoSchema.parse({
-        route_id: "openai/gpt-5.2",
-        provider: "openai",
-        provider_model_id: "gpt-5.2",
+        route_id: "openrouter/openai/gpt-5.2",
+        provider: "openrouter",
+        provider_model_id: "openai/gpt-5.2",
         display_name: "GPT-5.2",
     });
     const geminiModel = BrokerModelInfoSchema.parse({
-        route_id: "google/gemini-2.5-pro",
-        provider: "google",
+        route_id: "google-vertex/gemini-2.5-pro",
+        provider: "google-vertex",
         provider_model_id: "gemini-2.5-pro",
         display_name: "Gemini 2.5 Pro",
     });
@@ -38,8 +38,8 @@ const fixtureModels = (): ModelsListResponse => {
         display_name: "Claude Sonnet 4.5",
     });
     const providers: Record<string, ProviderListEntry> = {
-        openai: { status: "catalog", models: [openaiModel] },
-        google: { status: "catalog", models: [geminiModel] },
+        openrouter: { status: "catalog", models: [openaiModel] },
+        "google-vertex": { status: "catalog", models: [geminiModel] },
         anthropic: { status: "catalog", models: [anthropicModel] },
     };
     return {
@@ -83,7 +83,7 @@ const stubConfiguredProviders = (configured: string[]): void => {
                 ok: true as const,
                 value: {
                     model: "x",
-                    provider: "openai" as const,
+                    provider: "openrouter" as const,
                     text: "x",
                     usage: {
                         input_tokens: 0,
@@ -110,8 +110,8 @@ const defaultConsensusImpl = (): Promise<unknown> =>
         schema: "cli.consensus/2",
         models: [
             {
-                route_id: "openai/gpt-5.2",
-                provider: "openai",
+                route_id: "openrouter/openai/gpt-5.2",
+                provider: "openrouter",
                 provider_model_id: "gpt-5.2",
                 response: "ok",
                 stance: "neutral",
@@ -130,7 +130,7 @@ const defaultConsensusImpl = (): Promise<unknown> =>
 
 const stubDefaults = (): void => {
     stubCatalog(fixtureModels());
-    stubConfiguredProviders(["openai", "google", "anthropic"]);
+    stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
     stubRunConsensus(defaultConsensusImpl);
 };
 
@@ -161,10 +161,20 @@ describe("runConsensusCommand", () => {
     it("returns 2 for invalid model/prompt input", async () => {
         const cases: Array<{ args: string[]; checkStderr?: string }> = [
             { args: ["--prompt", "test"] },
-            { args: ["--models", "openai/gpt-5.2,google/gemini-2.5-pro"] },
+            {
+                args: [
+                    "--models",
+                    "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                ],
+            },
             { args: ["--models", ",,", "--prompt", "test"] },
             {
-                args: ["--models", "openai/gpt-5.2", "--prompt", "test"],
+                args: [
+                    "--models",
+                    "openrouter/openai/gpt-5.2",
+                    "--prompt",
+                    "test",
+                ],
                 checkStderr: "at least two models",
             },
         ];
@@ -203,7 +213,7 @@ describe("runConsensusCommand", () => {
         const { result, stdout } = await captureOutput(() =>
             runConsensusCommand([
                 "--models",
-                "openai/gpt-5.2,google/gemini-2.5-pro",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
                 "--prompt",
                 "test",
             ]),
@@ -238,7 +248,10 @@ describe("runConsensusCommand", () => {
         stubDefaults();
         const { result, stderr } = await mockStdin(
             () => runConsensusCommand(["--stdin-json"]),
-            JSON.stringify({ models: ["openai/gpt-5.2"], prompt: "test" }),
+            JSON.stringify({
+                models: ["openrouter/openai/gpt-5.2"],
+                prompt: "test",
+            }),
         );
         expect(result).toBe(2);
         expect(stderr).toContain("at least two models");
@@ -246,7 +259,7 @@ describe("runConsensusCommand", () => {
 
     it("returns 3 and prints cli.consensus.error/1 for ambiguous model", async () => {
         stubCatalog(fixtureModels());
-        stubConfiguredProviders(["openai", "google", "anthropic"]);
+        stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
         // Override resolve-route to return ambiguity
         mock.module("@/providers/resolve-route", () => ({
             classifyInput: (input: string) =>
@@ -258,7 +271,7 @@ describe("runConsensusCommand", () => {
                 error: {
                     code: "ambiguous_model" as const,
                     input: "shared",
-                    candidates: ["openai/shared", "google/shared"],
+                    candidates: ["anthropic/shared", "azure/shared"],
                     message:
                         "Model 'shared' is exposed by multiple configured providers.",
                 },
@@ -269,7 +282,7 @@ describe("runConsensusCommand", () => {
         const { result, stdout } = await captureOutput(() =>
             runConsensusCommand([
                 "--models",
-                "shared,openai/gpt-5.2",
+                "shared,openrouter/openai/gpt-5.2",
                 "--prompt",
                 "test",
             ]),
@@ -281,14 +294,14 @@ describe("runConsensusCommand", () => {
         expect(payload.schema).toBe("cli.consensus.error/1");
         expect(payload.error.code).toBe("ambiguous_model");
         expect(payload.error.input).toBe("shared");
-        expect(payload.error.candidates).toContain("openai/shared");
-        expect(payload.error.candidates).toContain("google/shared");
+        expect(payload.error.candidates).toContain("anthropic/shared");
+        expect(payload.error.candidates).toContain("azure/shared");
         expect(payload.error.candidates.length).toBe(2);
     });
 
     it("returns 3 and prints cli.consensus.error/1 for unknown model", async () => {
         stubCatalog(fixtureModels());
-        stubConfiguredProviders(["openai", "google", "anthropic"]);
+        stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
         mock.module("@/providers/resolve-route", () => ({
             classifyInput: (input: string) =>
                 input.includes("/")
@@ -308,7 +321,7 @@ describe("runConsensusCommand", () => {
         const { result, stdout } = await captureOutput(() =>
             runConsensusCommand([
                 "--models",
-                "missing,openai/gpt-5.2",
+                "missing,openrouter/openai/gpt-5.2",
                 "--prompt",
                 "test",
             ]),
@@ -324,7 +337,7 @@ describe("runConsensusCommand", () => {
 
     it("returns 0 with synthesis=null when synthesis-model cannot be resolved", async () => {
         stubCatalog(fixtureModels());
-        stubConfiguredProviders(["openai", "google", "anthropic"]);
+        stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
         // Allow real resolution for participant models but fail for synthesis
         mock.module("@/providers/resolve-route", () => ({
             classifyInput: (input: string) =>
@@ -353,8 +366,8 @@ describe("runConsensusCommand", () => {
                 return {
                     ok: true as const,
                     value: {
-                        route_id: id ?? "openai/gpt-5.2",
-                        provider: "openai" as const,
+                        route_id: id ?? "openrouter/openai/gpt-5.2",
+                        provider: "openrouter" as const,
                         provider_model_id: "gpt-5.2",
                         display_name: "GPT-5.2",
                     },
@@ -371,7 +384,7 @@ describe("runConsensusCommand", () => {
         const { result, stdout } = await captureOutput(() =>
             runConsensusCommand([
                 "--models",
-                "openai/gpt-5.2,google/gemini-2.5-pro",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
                 "--prompt",
                 "test",
                 "--synthesis-model",
@@ -401,7 +414,7 @@ describe("runConsensusCommand", () => {
         const { result, stdout } = await captureOutput(() =>
             runConsensusCommand([
                 "--models",
-                "openai/gpt-5.2,google/gemini-2.5-pro",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
                 "--prompt",
                 "test",
             ]),
@@ -425,13 +438,13 @@ describe("runConsensusCommand", () => {
             configureLogging: async () => {},
         }));
         stubCatalog(fixtureModels());
-        stubConfiguredProviders(["openai"]);
+        stubConfiguredProviders(["openrouter"]);
         stubRunConsensus(defaultConsensusImpl);
 
         const { result, stderr } = await captureOutput(() =>
             runConsensusCommand([
                 "--models",
-                "openai/gpt-5.2,google/gemini-2.5-pro",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
                 "--prompt",
                 "test",
             ]),

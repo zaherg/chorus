@@ -40,8 +40,8 @@ const SCHEMA_JSON = {
     ok: "boolean",
     models: [
         {
-            route_id: "string (e.g. openai/gpt-5.2)",
-            provider: "string (e.g. openai)",
+            route_id: "string (e.g. openrouter/openai/gpt-5.2)",
+            provider: "string (e.g. openrouter)",
             provider_model_id: "string",
             response: "string | null",
             stance: "for | against | neutral | null",

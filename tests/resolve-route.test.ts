@@ -18,9 +18,9 @@ import {
 // === Fixture ===
 
 const buildFixture = (): ModelsListResponse => {
-    const openaiGpt52: BrokerModelInfo = BrokerModelInfoSchema.parse({
-        route_id: "openai/gpt-5.2",
-        provider: "openai",
+    const azureGpt52: BrokerModelInfo = BrokerModelInfoSchema.parse({
+        route_id: "azure/gpt-5.2",
+        provider: "azure",
         provider_model_id: "gpt-5.2",
         display_name: "GPT-5.2",
         context_window: 128000,
@@ -29,9 +29,9 @@ const buildFixture = (): ModelsListResponse => {
         supports_tools: true,
         supports_structured_output: true,
     });
-    const openaiGpt4o: BrokerModelInfo = BrokerModelInfoSchema.parse({
-        route_id: "openai/gpt-4o",
-        provider: "openai",
+    const azureGpt4o: BrokerModelInfo = BrokerModelInfoSchema.parse({
+        route_id: "azure/gpt-4o",
+        provider: "azure",
         provider_model_id: "gpt-4o",
         display_name: "GPT-4o",
     });
@@ -42,10 +42,22 @@ const buildFixture = (): ModelsListResponse => {
         display_name: "Claude Sonnet 4.5",
     });
     const openrouterGpt52: BrokerModelInfo = BrokerModelInfoSchema.parse({
-        route_id: "openrouter/gpt-5.2",
+        route_id: "openrouter/openai/gpt-5.2",
         provider: "openrouter",
-        provider_model_id: "gpt-5.2",
+        provider_model_id: "openai/gpt-5.2",
         display_name: "GPT-5.2 (OpenRouter)",
+    });
+    const azureShared: BrokerModelInfo = BrokerModelInfoSchema.parse({
+        route_id: "azure/shared",
+        provider: "azure",
+        provider_model_id: "shared",
+        display_name: "Shared (Azure)",
+    });
+    const anthropicShared: BrokerModelInfo = BrokerModelInfoSchema.parse({
+        route_id: "anthropic/shared",
+        provider: "anthropic",
+        provider_model_id: "shared",
+        display_name: "Shared (Anthropic)",
     });
 
     return {
@@ -56,12 +68,17 @@ const buildFixture = (): ModelsListResponse => {
             expires_at: "2026-07-09T00:00:00.000Z",
         },
         providers: {
-            openai: { status: "catalog", models: [openaiGpt52, openaiGpt4o] },
-            anthropic: { status: "catalog", models: [anthropicSonnet] },
+            azure: {
+                status: "catalog",
+                models: [azureGpt52, azureGpt4o, azureShared],
+            },
+            anthropic: {
+                status: "catalog",
+                models: [anthropicSonnet, anthropicShared],
+            },
             openrouter: { status: "catalog", models: [openrouterGpt52] },
 
             custom: { status: "passthrough", models: [] },
-            gateway: { status: "passthrough", models: [] },
         },
     };
 };
@@ -101,12 +118,12 @@ describe("resolve-route", () => {
         test("parses or rejects based on input shape", () => {
             const cases = [
                 {
-                    input: "openai/gpt-5.2",
-                    want: { provider: "openai", providerModelId: "gpt-5.2" },
+                    input: "azure/gpt-5.2",
+                    want: { provider: "azure", providerModelId: "gpt-5.2" },
                 },
                 { input: "gpt-5.2", want: undefined },
                 { input: "unknown-provider/model", want: undefined },
-                { input: "openai/", want: undefined },
+                { input: "azure/", want: undefined },
             ] as const;
             for (const { input, want } of cases) {
                 expect(parseRouteId(input)).toEqual(want);
@@ -116,9 +133,9 @@ describe("resolve-route", () => {
 
     describe("classifyInput", () => {
         test("classifies an exact route_id when the input contains '/'", () => {
-            expect(classifyInput("openai/gpt-5.2")).toEqual({
+            expect(classifyInput("azure/gpt-5.2")).toEqual({
                 kind: "exact_route_id",
-                route_id: "openai/gpt-5.2",
+                route_id: "azure/gpt-5.2",
             });
         });
 
@@ -133,8 +150,8 @@ describe("resolve-route", () => {
     describe("resolveRoute", () => {
         test("exact route_id for a configured catalog-backed provider returns the row", async () => {
             const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["openai"]);
-            const result = await resolveRoute(classifyInput("openai/gpt-5.2"), {
+            const configured = new Set<ProviderId>(["azure"]);
+            const result = await resolveRoute(classifyInput("azure/gpt-5.2"), {
                 catalog,
                 configuredProviders: configured,
             });
@@ -142,8 +159,8 @@ describe("resolve-route", () => {
             if (!result.ok) {
                 return;
             }
-            expect(result.value.route_id).toBe("openai/gpt-5.2");
-            expect(result.value.provider).toBe("openai");
+            expect(result.value.route_id).toBe("azure/gpt-5.2");
+            expect(result.value.provider).toBe("azure");
             expect(result.value.provider_model_id).toBe("gpt-5.2");
             expect(result.value.display_name).toBe("GPT-5.2");
         });
@@ -151,12 +168,12 @@ describe("resolve-route", () => {
         test("exact route_id with provider not configured returns model_not_found", async () => {
             const catalog = buildFixture();
             const configured = new Set<ProviderId>(["anthropic"]);
-            const result = await resolveRoute(classifyInput("openai/gpt-5.2"), {
+            const result = await resolveRoute(classifyInput("azure/gpt-5.2"), {
                 catalog,
                 configuredProviders: configured,
             });
             const error = expectNotFound(result);
-            expect(error.message.toLowerCase()).toContain("openai");
+            expect(error.message.toLowerCase()).toContain("azure");
             expect(error.message.toLowerCase()).toContain("not configured");
         });
 
@@ -179,7 +196,7 @@ describe("resolve-route", () => {
 
         test("exact route_id for a passthrough provider that is not configured returns model_not_found", async () => {
             const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["openai"]);
+            const configured = new Set<ProviderId>(["azure"]);
             const result = await resolveRoute(
                 classifyInput("custom/local-model"),
                 { catalog, configuredProviders: configured },
@@ -191,18 +208,18 @@ describe("resolve-route", () => {
 
         test("exact route_id for a model that does not exist in the catalog returns model_not_found (no passthrough fallback)", async () => {
             const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["openai"]);
+            const configured = new Set<ProviderId>(["azure"]);
             const result = await resolveRoute(
-                classifyInput("openai/nonexistent"),
+                classifyInput("azure/nonexistent"),
                 { catalog, configuredProviders: configured },
             );
             const error = expectNotFound(result);
-            expect(error.message).toContain("openai/nonexistent");
+            expect(error.message).toContain("azure/nonexistent");
         });
 
         test("unqualified id resolved against a single configured provider returns that row", async () => {
             const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["openai"]);
+            const configured = new Set<ProviderId>(["azure"]);
             const result = await resolveRoute(classifyInput("gpt-4o"), {
                 catalog,
                 configuredProviders: configured,
@@ -211,28 +228,28 @@ describe("resolve-route", () => {
             if (!result.ok) {
                 return;
             }
-            expect(result.value.route_id).toBe("openai/gpt-4o");
-            expect(result.value.provider).toBe("openai");
+            expect(result.value.route_id).toBe("azure/gpt-4o");
+            expect(result.value.provider).toBe("azure");
         });
 
         test("unqualified id exposed by multiple providers returns ambiguous_model with sorted candidates", async () => {
             const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["openai", "openrouter"]);
-            const result = await resolveRoute(classifyInput("gpt-5.2"), {
+            const configured = new Set<ProviderId>(["azure", "anthropic"]);
+            const result = await resolveRoute(classifyInput("shared"), {
                 catalog,
                 configuredProviders: configured,
             });
             const error = expectAmbiguity(result);
             expect(error.candidates).toEqual([
-                "openai/gpt-5.2",
-                "openrouter/gpt-5.2",
+                "anthropic/shared",
+                "azure/shared",
             ]);
         });
 
         test("unqualified id with no catalog match returns model_not_found", async () => {
             const catalog = buildFixture();
             const configured = new Set<ProviderId>([
-                "openai",
+                "azure",
                 "anthropic",
                 "openrouter",
             ]);
@@ -242,6 +259,28 @@ describe("resolve-route", () => {
             );
             const error = expectNotFound(result);
             expect(error.input).toBe("nonexistent-model");
+        });
+
+        test("removed provider route id returns model_not_found with a generic parse message", async () => {
+            const catalog = buildFixture();
+            const configured = new Set<ProviderId>(["azure"]);
+            const result = await resolveRoute(classifyInput("openai/gpt-5.2"), {
+                catalog,
+                configuredProviders: configured,
+            });
+            const error = expectNotFound(result);
+            expect(error.message).toContain("provider/model");
+        });
+
+        test("malformed provider prefix returns the same generic failure class", async () => {
+            const catalog = buildFixture();
+            const configured = new Set<ProviderId>(["azure"]);
+            const result = await resolveRoute(
+                classifyInput("not-a-provider/model"),
+                { catalog, configuredProviders: configured },
+            );
+            const error = expectNotFound(result);
+            expect(error.message).toContain("provider/model");
         });
     });
 });

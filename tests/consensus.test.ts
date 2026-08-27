@@ -11,8 +11,8 @@ import type { Result, ToolError } from "@/types/tools";
 import { testModel } from "./helpers";
 
 const providerFor = (modelId: string): ProviderId => {
-    if (modelId.startsWith("gpt-")) return "openai";
-    if (modelId.startsWith("gemini-")) return "google";
+    if (modelId.startsWith("gpt-")) return "openrouter";
+    if (modelId.startsWith("gemini-")) return "google-vertex";
     return "anthropic";
 };
 
@@ -25,14 +25,14 @@ const makeModel = (id: string, provider: ProviderId): BrokerModelInfo =>
     });
 
 const registryModels: BrokerModelInfo[] = [
-    makeModel("gpt-5.2", "openai"),
-    makeModel("gemini-2.5-pro", "google"),
+    makeModel("gpt-5.2", "openrouter"),
+    makeModel("gemini-2.5-pro", "google-vertex"),
     makeModel("claude-sonnet-4-20250514", "anthropic"),
 ];
 
 const configuredProviders: ReadonlySet<ProviderId> = new Set<ProviderId>([
-    "openai",
-    "google",
+    "openrouter",
+    "google-vertex",
     "anthropic",
 ]);
 

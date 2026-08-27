@@ -4,10 +4,10 @@
  *
  * Inputs arrive in two shapes:
  *
- *  - Exact `route_id` (e.g. `openai/gpt-5.2`, `custom/local-model`): the agent
+ *  - Exact `route_id` (e.g. `openrouter/openai/gpt-5.2`, `custom/local-model`): the agent
  *    picked a specific provider+model pair. The provider may be catalog-backed
- *    (matched against `ModelsListResponse.providers`) or passthrough (`custom`,
- *    `gateway`), in which case a synthetic row is constructed.
+ *    (matched against `ModelsListResponse.providers`) or passthrough (`custom`),
+ *    in which case a synthetic row is constructed.
  *  - Unqualified provider-native ID (e.g. `gpt-5.2`): the agent did not pick a
  *    provider. We look up configured catalog-backed providers whose catalog row
  *    has a matching `provider_model_id`. Zero matches => not found. One match
@@ -188,7 +188,7 @@ const unknownModelMessage = (input: string): ResolveRouteFailure => ({
  *
  *  - `exact_route_id`: parses the string. Catalog-backed providers must have
  *    the model in `catalog.providers[provider].models` and be in
- *    `configuredProviders`. Passthrough providers (`custom`, `gateway`) are
+ *    `configuredProviders`. Passthrough providers (`custom`) are
  *    accepted only when configured; a synthetic row is returned.
  *  - `unqualified`: searches configured catalog-backed providers for an exact
  *    `provider_model_id` match. Passthrough providers are not searched
@@ -224,7 +224,7 @@ export const resolveRoute = (
             return { ok: true, value: match };
         }
 
-        // Passthrough provider (custom, gateway).
+        // Passthrough provider (custom).
         if (!configuredProviders.has(provider)) {
             return notConfiguredMessage(input.route_id, provider);
         }

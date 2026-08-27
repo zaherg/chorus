@@ -17,7 +17,7 @@ export type Stance = "for" | "against" | "neutral";
 /** Configuration for a single model participating in a consensus round. */
 export interface ConsensusModelConfig {
     /**
-     * Executable route ID for the model (e.g. `"openai/gpt-5.2"`,
+     * Executable route ID for the model (e.g. `"openrouter/openai/gpt-5.2"`,
      * `"anthropic/claude-sonnet-4-5"`). Resolved by the broker to a
      * `BrokerModelInfo`; the registry then uses the provider-native model ID.
      */
@@ -57,9 +57,9 @@ export interface ParticipantError {
  *   failure (and `response` is `null`).
  */
 export interface ParticipantResponse {
-    /** Executable route ID (e.g. `"openai/gpt-5.2"`). */
+    /** Executable route ID (e.g. `"openrouter/openai/gpt-5.2"`). */
     route_id: string;
-    /** Internal provider ID (e.g. `"openai"`). */
+    /** Internal provider ID (e.g. `"openrouter"`). */
     provider: string;
     /** Provider-native model ID passed to the AI SDK provider. */
     provider_model_id: string;

@@ -251,25 +251,32 @@ describe("model-catalog", () => {
 
     describe("normalizeProviderModels", () => {
         test("produces executable route_id values and copies capability fields when present", () => {
-            const openaiRaw = (fixture as { providers: { openai: unknown } })
-                .providers.openai;
-            const providerCatalog = ProviderCatalogSchema.parse(openaiRaw);
+            const openrouterRaw = (
+                fixture as { providers: { openrouter: unknown } }
+            ).providers.openrouter;
+            const providerCatalog = ProviderCatalogSchema.parse(openrouterRaw);
             const models = normalizeProviderModels(
-                "openai",
-                "openai",
+                "openrouter",
+                "openrouter",
                 providerCatalog,
                 (fixture as { models: Record<string, unknown> }).models,
             );
-            const gpt52 = models.find((m) => m.provider_model_id === "gpt-5.2");
-            expect(gpt52).toBeDefined();
-            expect(gpt52?.route_id).toBe("openai/gpt-5.2");
-            expect(gpt52?.display_name).toBe("GPT-5.2");
-            expect(gpt52?.context_window).toBe(256000);
-            expect(gpt52?.output_limit).toBe(16384);
-            expect(gpt52?.supports_reasoning).toBe(true);
-            expect(gpt52?.supports_tools).toBe(true);
-            expect(gpt52?.supports_structured_output).toBe(true);
-            expect(gpt52?.canonical_model_id).toBe("openai/gpt-5.2");
+            const claude = models.find(
+                (m) => m.provider_model_id === "anthropic/claude-sonnet-4.5",
+            );
+            expect(claude).toBeDefined();
+            expect(claude?.route_id).toBe(
+                "openrouter/anthropic/claude-sonnet-4.5",
+            );
+            expect(claude?.display_name).toBe("Claude Sonnet 4.5 (OpenRouter)");
+            expect(claude?.context_window).toBe(200000);
+            expect(claude?.output_limit).toBe(8192);
+            expect(claude?.supports_reasoning).toBe(true);
+            expect(claude?.supports_tools).toBe(true);
+            expect(claude?.supports_structured_output).toBe(false);
+            expect(claude?.canonical_model_id).toBe(
+                "openrouter/anthropic/claude-sonnet-4.5",
+            );
         });
 
         test("omits optional capability fields when absent in the catalog entry", () => {
@@ -279,15 +286,15 @@ describe("model-catalog", () => {
                 },
             });
             const models = normalizeProviderModels(
-                "openai",
-                "openai",
+                "openrouter",
+                "openrouter",
                 providerCatalog,
                 {},
             );
             expect(models).toHaveLength(1);
             const m = models[0];
             if (!m) throw new Error("expected a model");
-            expect(m.route_id).toBe("openai/no-caps");
+            expect(m.route_id).toBe("openrouter/no-caps");
             expect(m.display_name).toBe("Bare");
             expect(m.context_window).toBeUndefined();
             expect(m.output_limit).toBeUndefined();
@@ -300,23 +307,28 @@ describe("model-catalog", () => {
         test("resolves canonical_model_id only by exact id+provider match, not suffix match", () => {
             const providerCatalog = ProviderCatalogSchema.parse({
                 models: {
-                    "gpt-5.2": { name: "GPT-5.2" },
+                    "anthropic/claude-sonnet-4.5": {
+                        name: "Claude Sonnet 4.5",
+                    },
                 },
             });
             const canonicalModels = {
-                "openai/gpt-5.2-mini": {
-                    id: "gpt-5.2-mini",
-                    provider: "openai",
-                },
-                "openai/x-gpt-5.2": { id: "x-gpt-5.2", provider: "openai" },
-                "wrong-provider/gpt-5.2": {
-                    id: "gpt-5.2",
+                "openrouter/anthropic/claude-sonnet-4.5-mini": {
+                    id: "anthropic/claude-sonnet-4.5-mini",
                     provider: "openrouter",
+                },
+                "openrouter/x-anthropic/claude-sonnet-4.5": {
+                    id: "x-anthropic/claude-sonnet-4.5",
+                    provider: "openrouter",
+                },
+                "wrong-provider/anthropic/claude-sonnet-4.5": {
+                    id: "anthropic/claude-sonnet-4.5",
+                    provider: "anthropic",
                 },
             };
             const models = normalizeProviderModels(
-                "openai",
-                "openai",
+                "openrouter",
+                "openrouter",
                 providerCatalog,
                 canonicalModels,
             );
@@ -478,7 +490,7 @@ describe("model-catalog", () => {
             expect(result.warning).toContain("refresh failed");
         });
 
-        test("returns a payload where custom and gateway are passthrough with empty models", async () => {
+        test("returns a payload where custom is passthrough with no models", async () => {
             const { fn: fetchFn } = makeFetch(okJsonResponse(fixture));
             const { writer } = makeWriter();
             const result = await loadCatalog({
@@ -490,10 +502,12 @@ describe("model-catalog", () => {
             });
             expect(result.ok).toBe(true);
             if (!result.ok) return;
-            expect(result.providers.custom?.status).toBe("passthrough");
-            expect(result.providers.custom?.models).toEqual([]);
-            expect(result.providers.gateway?.status).toBe("passthrough");
-            expect(result.providers.gateway?.models).toEqual([]);
+            expect(result.providers.custom).toEqual({
+                status: "passthrough",
+                models: [],
+            });
+            expect(result.providers).not.toHaveProperty("openai");
+            expect(result.providers).not.toHaveProperty("gateway");
         });
 
         test("returns a payload that validates against ModelsListResponseSchema", async () => {
