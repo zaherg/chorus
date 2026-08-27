@@ -184,15 +184,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 | Package | Version | Purpose |
 |---|---|---|
-| `ai` | ^7.0.0 | Vercel AI SDK core |
-| `@ai-sdk/openai` | ^3.0.0 | OpenAI provider |
-| `@ai-sdk/anthropic` | ^3.0.0 | Anthropic provider |
-| `@ai-sdk/google` | ^3.0.0 | Google provider |
-| `@openrouter/ai-sdk-provider` | ^2.10.0 | OpenRouter provider |
-| `zod` | ^4.3.6 | Schema validation |
-| `@logtape/logtape` | * | Structured logging |
-
-Plus additional `@ai-sdk/*` SDK packages for the remaining catalog-backed providers.
+| `ai` | ^7.0.83 | Vercel AI SDK core |
+| `@ai-sdk/amazon-bedrock` | ^5.0.66 | Amazon Bedrock provider |
+| `@ai-sdk/anthropic` | ^4.0.44 | Anthropic provider |
+| `@ai-sdk/azure` | ^4.0.52 | Azure provider |
+| `@ai-sdk/google-vertex` | ^5.0.67 | Google Vertex AI provider |
+| `@ai-sdk/openai-compatible` | ^3.0.39 | Custom OpenAI-compatible endpoints |
+| `@openrouter/ai-sdk-provider` | ^3.0.0 | OpenRouter provider |
+| `zod` | ^4.4.3 | Schema validation |
+| `@logtape/logtape` | ^2.3.2 | Structured logging |
+| `@logtape/file` | ^2.3.2 | Rotating file sink |
 
 ### Dev
 

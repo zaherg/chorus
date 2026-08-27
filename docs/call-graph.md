@@ -124,7 +124,7 @@ src/providers/resolve-route.ts
     ├── lookupExactRoute()                    (configured catalog match)
     ├── lookupUnqualifiedRoute()              (unique provider-native match)
     ├── detectAmbiguous()                     (returns candidate route_id[])
-    └── lookupPassthroughRoute()              (custom / gateway prefix)
+    └── lookupPassthroughRoute()              (custom prefix)
 
   getRouteCandidates()                        (for ambiguity response)
 
@@ -208,7 +208,7 @@ src/prompts/consensus.ts
 
 
 ═══════════════════════════════════════════════════════════════════════════════
-COMPLETE CALL CHAIN: consensus --models "openai/gpt-5.2,anthropic/claude-sonnet-4-5" --prompt "p"
+COMPLETE CALL CHAIN: consensus --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5" --prompt "p"
 ═══════════════════════════════════════════════════════════════════════════════
 
 cli.runCli()
@@ -224,11 +224,11 @@ cli.runCli()
         │     ├── fetchFn (globalThis.fetch)
         │     └── → ~/.config/chorus/models-cache/{catalog,metadata}.json
         ├── providers/registry.createProviderRegistry(config)
-        ├── providers/resolve-route.resolveRoute("openai/gpt-5.2")      ──► BrokerModelInfo
+        ├── providers/resolve-route.resolveRoute("openrouter/openai/gpt-5.2")      ──► BrokerModelInfo
         ├── providers/resolve-route.resolveRoute("anthropic/claude-sonnet-4-5") ──► BrokerModelInfo
         │
         └── consensus.runConsensus({
-              models: [{model:"openai/gpt-5.2"},{model:"anthropic/claude-sonnet-4-5"}],
+              models: [{model:"openrouter/openai/gpt-5.2"},{model:"anthropic/claude-sonnet-4-5"}],
               parallel: true,
               ...
             })
@@ -241,7 +241,7 @@ cli.runCli()
               ├── runSettledWithConcurrency([a, b], maxConcurrency, queryModel)
               │     ├── queryModel(a)
               │     │     ├── buildConsensusPrompt("for", "p")
-              │     │     └── registry.generateText("openai/gpt-5.2", prompt, systemPrompt)
+              │     │     └── registry.generateText("openrouter/openai/gpt-5.2", prompt, systemPrompt)
               │     │           ├── buildProviderOptions()
               │     │           ├── getProviderFactory() ──► createProviderFactory()
               │     │           └── ai.generateText()     (Vercel AI SDK)

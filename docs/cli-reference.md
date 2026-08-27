@@ -43,13 +43,13 @@ consensus --stdin-json
 `--models` accepts exact provider-qualified `route_id` values returned by `consensus list-models --json`. Example:
 
 ```bash
-consensus --models "openai/gpt-5.2,anthropic/claude-sonnet-4-5,google/gemini-2.5-pro" \
+consensus --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5,google-vertex/gemini-2.5-pro" \
   --prompt "Should we use a monorepo or polyrepo?"
 ```
 
 Bare provider-native IDs (for example `gpt-5.2`) are accepted only when exactly one configured provider exposes that exact provider-native model ID. The CLI never suffix-matches model IDs. When two or more configured providers expose the same provider-native ID, the broker returns a structured ambiguity response listing candidate `route_id` values; it does not choose. Use provider-prefixed IDs to disambiguate.
 
-For `passthrough` providers (`custom`, `gateway`), the CLI accepts provider-prefixed IDs (for example `custom/local-model`) only when the model is known to the agent or supplied explicitly by the user.
+For `passthrough` providers (`custom`), the CLI accepts provider-prefixed IDs (for example `custom/local-model`) only when the model is known to the agent or supplied explicitly by the user.
 
 ### OUTPUT
 
@@ -61,9 +61,9 @@ JSON to stdout, schema `cli.consensus/2`:
   "schema": "cli.consensus/2",
   "models": [
     {
-      "route_id": "openai/gpt-5.2",
-      "provider": "openai",
-      "provider_model_id": "gpt-5.2",
+      "route_id": "openrouter/openai/gpt-5.2",
+      "provider": "openrouter",
+      "provider_model_id": "openai/gpt-5.2",
       "response": "...",
       "stance": "for",
       "error": null
@@ -94,7 +94,7 @@ JSON to stdout, schema `cli.consensus/2`:
 
 Field notes:
 - `models[].route_id` -- the executable route the agent passed.
-- `models[].provider` -- internal provider ID (for example `openai`).
+- `models[].provider` -- internal provider ID (for example `openrouter`).
 - `models[].provider_model_id` -- the model ID handed to the AI SDK provider.
 - `models[].response` -- raw text from the provider, or `null` on failure.
 - `models[].stance` -- the stance the model ultimately took, or `null` on failure.
@@ -124,13 +124,13 @@ When `--stdin-json` is used, pipe a JSON object:
 
 ```json
 {
-  "models": ["openai/gpt-5.2", "google/gemini-2.5-pro"],
+  "models": ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
   "prompt": "Evaluate this approach",
   "findings": "optional findings text",
   "step": "optional step description",
-  "stances": { "openai/gpt-5.2": "for", "google/gemini-2.5-pro": "against" },
-  "thinking_modes": { "openai/gpt-5.2": "high" },
-  "temperatures": { "openai/gpt-5.2": 0.3 },
+  "stances": { "openrouter/openai/gpt-5.2": "for", "google-vertex/gemini-2.5-pro": "against" },
+  "thinking_modes": { "openrouter/openai/gpt-5.2": "high" },
+  "temperatures": { "openrouter/openai/gpt-5.2": 0.3 },
   "temperature": 0.7,
   "files": ["src/main.ts"],
   "synthesis_model": "anthropic/claude-sonnet-4-5"
@@ -167,9 +167,9 @@ consensus list-models [--json] [--refresh] [--help]
 ```
 3 configured providers:
 
-  openai (catalog)
-    - openai/gpt-5.2  GPT-5.2 [ctx: 400000] [reasoning] [tools] [structured]
-    - openai/gpt-5-mini  GPT-5 mini [ctx: 200000] [tools]
+  openrouter (catalog)
+    - openrouter/openai/gpt-5.2  GPT-5.2 [ctx: 400000] [reasoning] [tools] [structured]
+    - openrouter/openai/gpt-5-mini  GPT-5 mini [ctx: 200000] [tools]
 
   anthropic (catalog)
     - anthropic/claude-sonnet-4-5  Claude Sonnet 4.5 [ctx: 200000] [reasoning] [tools]
@@ -193,14 +193,14 @@ JSON payload with schema `models.list/1`. Only configured providers are listed; 
     "expires_at": "2026-07-09T00:00:00.000Z"
   },
   "providers": {
-    "openai": {
+    "openrouter": {
       "status": "catalog",
       "models": [
         {
-          "route_id": "openai/gpt-5.2",
-          "provider": "openai",
-          "provider_model_id": "gpt-5.2",
-          "canonical_model_id": "openai/gpt-5.2",
+          "route_id": "openrouter/openai/gpt-5.2",
+          "provider": "openrouter",
+          "provider_model_id": "openai/gpt-5.2",
+          "canonical_model_id": "openrouter/openai/gpt-5.2",
           "display_name": "GPT-5.2",
           "context_window": 400000,
           "output_limit": 128000,
@@ -260,7 +260,7 @@ consensus list-models --json
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "Should we use a monorepo or polyrepo?"
 ```
 
@@ -268,27 +268,30 @@ consensus \
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "Should we migrate from REST to GraphQL?" \
-  --stance "openai/gpt-5.2=for" \
-  --stance "google/gemini-2.5-pro=against"
+  --stance "openrouter/openai/gpt-5.2=for" \
+  --stance "google-vertex/gemini-2.5-pro=against"
 ```
 
 ### With per-model thinking mode
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,anthropic/claude-sonnet-4-5" \
+  --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5" \
   --prompt "Review this architecture for scalability" \
-  --thinking-mode "openai/gpt-5.2=high" \
+  --thinking-mode "openrouter/openai/gpt-5.2=high" \
   --thinking-mode "anthropic/claude-sonnet-4-5=max"
 ```
+
+`--thinking-mode` reaches OpenRouter through an explicit reasoning-effort mapping: `minimal` to `minimal`, `low` to `low`, `medium` to `medium`, `high` to `high`, and `max` to `xhigh`.
+Anthropic receives a thinking budget; custom, Azure, Vertex AI, and Bedrock ignore thinking mode.
 
 ### Sequential consensus
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "What are the trade-offs?" \
   --sequential
 ```
@@ -297,7 +300,7 @@ consensus \
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "Review this code" \
   --files "src/cli.ts,src/config.ts"
 ```
@@ -306,7 +309,7 @@ consensus \
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "..." \
   --synthesis-model "anthropic/claude-sonnet-4-5"
 ```
@@ -314,19 +317,19 @@ consensus \
 ### Stdin JSON
 
 ```bash
-echo '{"models":["openai/gpt-5.2","google/gemini-2.5-pro"],"prompt":"Should I use tabs or spaces?"}' | \
+echo '{"models":["openrouter/openai/gpt-5.2","google-vertex/gemini-2.5-pro"],"prompt":"Should I use tabs or spaces?"}' | \
   consensus --stdin-json
 ```
 
 ### Passthrough provider example
 
 ```bash
-# Only `custom` and `gateway` are passthrough providers. All other providers
-# (including xAI, Perplexity, DeepSeek, etc.) are catalog-backed.
-# Use provider-prefixed IDs for passthrough providers only when the
+# Only `custom` is a passthrough provider. All other retained providers
+# (OpenRouter, Anthropic, Azure, Vertex AI, Bedrock) are catalog-backed.
+# Use provider-prefixed IDs for the passthrough provider only when the
 # model is known or supplied by the user.
 consensus \
-  --models "custom/example-model,openai/gpt-5.2" \
+  --models "custom/example-model,openrouter/openai/gpt-5.2" \
   --prompt "Compare these responses"
 # Replace example-model with the provider-native model ID you intend to call.
 ```

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The broker supports 23 provider slots: 21 catalog-backed providers plus 2 passthrough providers. Each configured provider falls into one of two tiers. The broker uses a public models.dev catalog (fetched and cached locally) to produce executable `route_id` values for catalog providers.
+The broker supports 6 providers: 5 catalog-backed providers plus 1 passthrough provider. Each configured provider falls into one of two tiers. The broker uses a public models.dev catalog (fetched and cached locally) to produce executable `route_id` values for catalog providers.
 
 ## Provider Tiers
 
@@ -12,27 +12,11 @@ These providers have a models.dev catalog key. The broker fetches and caches the
 
 | Provider | Config Key | models.dev key |
 |---|---|---|
-| Alibaba | `alibaba_api_key` | `alibaba` |
 | Amazon Bedrock | `amazon_bedrock_api_key` | `amazon-bedrock` |
 | Anthropic | `anthropic_api_key` | `anthropic` |
 | Azure | `azure_api_key` | `azure` |
-| Baseten | `baseten_api_key` | `baseten` |
-| Cerebras | `cerebras_api_key` | `cerebras` |
-| Cohere | `cohere_api_key` | `cohere` |
-| DeepInfra | `deepinfra_api_key` | `deepinfra` |
-| DeepSeek | `deepseek_api_key` | `deepseek` |
-| Fireworks | `fireworks_api_key` | `fireworks-ai` |
-| Google | `google_api_key` | `google` |
-| Google Vertex | `google_vertex_api_key` | `google-vertex` |
-| Groq | `groq_api_key` | `groq` |
-| Hugging Face | `huggingface_api_key` | `huggingface` |
-| Mistral | `mistral_api_key` | `mistral` |
-| OpenAI | `openai_api_key` | `openai` |
+| Google Vertex AI | `google_vertex_api_key` | `google-vertex` |
 | OpenRouter | `openrouter_api_key` | `openrouter` |
-| Perplexity | `perplexity_api_key` | `perplexity` |
-| TogetherAI | `togetherai_api_key` | `togetherai` |
-| Vercel | `vercel_api_key` | `vercel` |
-| xAI | `xai_api_key` | `xai` |
 
 ### Passthrough (Tier 2)
 
@@ -41,9 +25,8 @@ These providers are configured but have no models.dev catalog key. The agent may
 | Provider | Config Key | ID format |
 |---|---|---|
 | Custom OpenAI-compatible | `custom_api_key` + `custom_url` | `custom/<model-id>` |
-| Gateway | `gateway_api_key` | `gateway/<model-id>` |
 
-For passthrough providers, `consensus list-models --json` reports `status: "passthrough"` and an empty `models` array. Use provider-prefixed IDs such as `custom/example-model` or `gateway/example-model`. Replace example-model with the provider-native model ID you intend to call.
+For passthrough providers, `consensus list-models --json` reports `status: "passthrough"` and an empty `models` array. Use provider-prefixed IDs such as `custom/example-model`. Replace example-model with the provider-native model ID you intend to call.
 
 ## Catalog Fetch and Cache
 
@@ -86,7 +69,7 @@ When the agent passes a model ID to `--models` or `--synthesis-model`:
 1. **Exact route.** If the input is an exact `route_id` that matches a configured catalog row, the broker uses that route. The first path segment is the internal provider ID; everything after the first slash is the provider-native model ID passed to the AI SDK.
 2. **Optional unqualified input.** A bare provider-native ID (no `/`) is accepted only when exactly one configured provider exposes that exact provider-native ID. The CLI never suffix-matches model IDs.
 3. **Ambiguous input.** If a bare ID maps to multiple configured providers, the broker returns a structured ambiguity response listing candidate `route_id` values and exits with code 3. The agent must pick an exact `route_id` and retry. No provider calls run.
-4. **Passthrough.** A provider-prefixed ID targeting a configured passthrough provider (`custom`, `gateway`) is accepted when the model is known to the agent or supplied by the user. The broker hands the provider-native ID to the AI SDK provider and lets the API accept or reject it.
+4. **Passthrough.** A provider-prefixed ID targeting the configured passthrough provider (`custom`) is accepted when the model is known to the agent or supplied by the user. The broker hands the provider-native ID to the AI SDK provider and lets the API accept or reject it.
 
 Example ambiguity response:
 
@@ -96,8 +79,8 @@ Example ambiguity response:
   "error": {
     "code": "ambiguous_model",
     "input": "gpt-5.2",
-    "candidates": ["openai/gpt-5.2", "openrouter/openai/gpt-5.2"],
-    "message": "Model 'gpt-5.2' is exposed by multiple configured providers: openai/gpt-5.2, openrouter/openai/gpt-5.2. Use a fully qualified route_id."
+    "candidates": ["azure/gpt-5.2", "openrouter/openai/gpt-5.2"],
+    "message": "Model 'gpt-5.2' is exposed by multiple configured providers: azure/gpt-5.2, openrouter/openai/gpt-5.2. Use a fully qualified route_id."
   }
 }
 ```
@@ -114,15 +97,16 @@ Synthesis is opt-in. The broker never auto-picks a synthesis model.
 
 Per-model thinking modes are mapped to provider-specific options:
 
-| Thinking Mode | Anthropic (budgetTokens) | OpenAI (reasoningEffort) |
+| Thinking Mode | Anthropic (budgetTokens) | OpenRouter (reasoning effort) |
 |---|---|---|
-| `minimal` | 1,024 | `low` |
+| `minimal` | 1,024 | `minimal` |
 | `low` | 5,000 | `low` |
 | `medium` | 20,000 | `medium` |
 | `high` | 50,000 | `high` |
-| `max` | 80,000 | `high` |
+| `max` | 80,000 | `xhigh` |
 
-Other providers ignore thinking mode.
+Chorus `max` maps to OpenRouter `xhigh`, not `max`; the first four modes map literally.
+Custom, Azure, Vertex AI, and Bedrock ignore thinking mode.
 
 ## Custom Provider URL Validation
 

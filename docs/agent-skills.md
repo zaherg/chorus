@@ -43,7 +43,7 @@ Prefer exact provider-qualified `route_id` values. Avoid bare IDs like `gpt-5.2`
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,anthropic/claude-sonnet-4-5,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5,google-vertex/gemini-2.5-pro" \
   --prompt "Should we use a monorepo or polyrepo for this project?"
 ```
 
@@ -51,17 +51,17 @@ consensus \
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "Should we migrate from REST to GraphQL?" \
-  --stance "openai/gpt-5.2=for" \
-  --stance "google/gemini-2.5-pro=against"
+  --stance "openrouter/openai/gpt-5.2=for" \
+  --stance "google-vertex/gemini-2.5-pro=against"
 ```
 
 #### With file embedding
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "Review this code for security issues" \
   --files "src/auth.ts,src/api.ts"
 ```
@@ -70,7 +70,7 @@ consensus \
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro,anthropic/claude-sonnet-4-5" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro,anthropic/claude-sonnet-4-5" \
   --prompt "Design a caching strategy" \
   --sequential
 ```
@@ -79,11 +79,11 @@ consensus \
 
 ```bash
 echo '{
-  "models": ["openai/gpt-5.2", "google/gemini-2.5-pro"],
+  "models": ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
   "prompt": "Evaluate this approach",
-  "stances": { "openai/gpt-5.2": "for", "google/gemini-2.5-pro": "against" },
-  "thinking_modes": { "openai/gpt-5.2": "high" },
-  "temperatures": { "openai/gpt-5.2": 0.3 },
+  "stances": { "openrouter/openai/gpt-5.2": "for", "google-vertex/gemini-2.5-pro": "against" },
+  "thinking_modes": { "openrouter/openai/gpt-5.2": "high" },
+  "temperatures": { "openrouter/openai/gpt-5.2": 0.3 },
   "temperature": 0.7,
   "files": ["src/main.ts"]
 }' | consensus --stdin-json
@@ -95,20 +95,20 @@ Omit `--synthesis-model` by default. Combine raw responses in the agent. Provide
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "..." \
   --synthesis-model "anthropic/claude-sonnet-4-5"
 ```
 
 #### Passthrough provider
 
-For `passthrough` providers (`custom`, `gateway`), use provider-prefixed IDs only when the model is known to the agent or explicitly supplied by the user. If unsure, ask the user for the exact provider and model ID.
+For `passthrough` providers (`custom`), use provider-prefixed IDs only when the model is known to the agent or explicitly supplied by the user. If unsure, ask the user for the exact provider and model ID.
 
 ```bash
-# xAI is a passthrough slot in this example. Replace example-model with the
+# `custom` is the passthrough provider. Replace example-model with the
 # provider-native model ID you intend to call.
 consensus \
-  --models "xai/example-model,openai/gpt-5.2" \
+  --models "custom/example-model,openrouter/openai/gpt-5.2" \
   --prompt "Compare these responses"
 ```
 
@@ -191,10 +191,10 @@ cat /tmp/consensus-tests.log
 ```bash
 REVIEW=$(codex "Review src/consensus.ts for correctness and edge cases")
 consensus \
-  --models "openai/gpt-5.2,google/gemini-2.5-pro" \
+  --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "Evaluate this code review: $REVIEW" \
-  --stance "openai/gpt-5.2=for" \
-  --stance "google/gemini-2.5-pro=against"
+  --stance "openrouter/openai/gpt-5.2=for" \
+  --stance "google-vertex/gemini-2.5-pro=against"
 ```
 
 ### Working Directory

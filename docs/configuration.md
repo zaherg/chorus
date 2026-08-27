@@ -14,28 +14,11 @@ Created on first run with sensible defaults (API keys are empty). On POSIX syste
   "provider_timeout_ms": 120000,
   "log_level": "info",
   "max_concurrent_processes": 3,
-  "openai_api_key": "",
-  "anthropic_api_key": "",
-  "google_api_key": "",
   "openrouter_api_key": "",
-  "alibaba_api_key": "",
+  "anthropic_api_key": "",
+  "google_vertex_api_key": "",
   "amazon_bedrock_api_key": "",
   "azure_api_key": "",
-  "baseten_api_key": "",
-  "cerebras_api_key": "",
-  "cohere_api_key": "",
-  "deepinfra_api_key": "",
-  "deepseek_api_key": "",
-  "fireworks_api_key": "",
-  "gateway_api_key": "",
-  "google_vertex_api_key": "",
-  "groq_api_key": "",
-  "huggingface_api_key": "",
-  "mistral_api_key": "",
-  "perplexity_api_key": "",
-  "togetherai_api_key": "",
-  "vercel_api_key": "",
-  "xai_api_key": "",
   "custom_api_key": "",
   "custom_url": "",
   "allow_insecure_custom": false
@@ -58,28 +41,11 @@ Each provider has a corresponding config key:
 
 | Key | Provider |
 |---|---|
-| `openai_api_key` | OpenAI |
-| `anthropic_api_key` | Anthropic |
-| `google_api_key` | Google Generative AI |
 | `openrouter_api_key` | OpenRouter |
-| `alibaba_api_key` | Alibaba |
+| `anthropic_api_key` | Anthropic |
+| `google_vertex_api_key` | Google Vertex AI |
 | `amazon_bedrock_api_key` | Amazon Bedrock |
 | `azure_api_key` | Azure OpenAI |
-| `baseten_api_key` | Baseten |
-| `cerebras_api_key` | Cerebras |
-| `cohere_api_key` | Cohere |
-| `deepinfra_api_key` | DeepInfra |
-| `deepseek_api_key` | DeepSeek |
-| `fireworks_api_key` | Fireworks |
-| `gateway_api_key` | AI Gateway |
-| `google_vertex_api_key` | Google Vertex AI |
-| `groq_api_key` | Groq |
-| `huggingface_api_key` | Hugging Face |
-| `mistral_api_key` | Mistral |
-| `perplexity_api_key` | Perplexity |
-| `togetherai_api_key` | Together AI |
-| `vercel_api_key` | Vercel AI Gateway |
-| `xai_api_key` | xAI |
 | `custom_api_key` | Custom OpenAI-compatible endpoint |
 | `custom_url` | Custom endpoint base URL |
 
@@ -103,7 +69,7 @@ String values can reference shell environment variables with `$ENV_VAR`:
 
 ```json
 {
-  "openai_api_key": "$OPENAI_API_KEY",
+  "openrouter_api_key": "$OPENROUTER_API_KEY",
   "anthropic_api_key": "$ANTHROPIC_API_KEY"
 }
 ```
@@ -130,11 +96,11 @@ Config is validated via Zod on startup. Invalid values cause the CLI to exit wit
 
 ## Example Configs
 
-### Minimal (OpenAI only)
+### Minimal (OpenRouter only)
 
 ```json
 {
-  "openai_api_key": "$OPENAI_API_KEY"
+  "openrouter_api_key": "$OPENROUTER_API_KEY"
 }
 ```
 
@@ -142,9 +108,9 @@ Config is validated via Zod on startup. Invalid values cause the CLI to exit wit
 
 ```json
 {
-  "openai_api_key": "$OPENAI_API_KEY",
+  "openrouter_api_key": "$OPENROUTER_API_KEY",
   "anthropic_api_key": "$ANTHROPIC_API_KEY",
-  "google_api_key": "$GOOGLE_API_KEY",
+  "google_vertex_api_key": "$GOOGLE_VERTEX_API_KEY",
   "custom_api_key": "$OLLAMA_API_KEY",
   "custom_url": "http://localhost:11434/v1",
   "log_level": "debug",

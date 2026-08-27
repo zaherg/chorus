@@ -44,9 +44,8 @@ First run creates `~/.config/chorus/config.json` with empty defaults. Edit it to
 
 ```json
 {
-  "openai_api_key": "$OPENAI_API_KEY",
-  "anthropic_api_key": "$ANTHROPIC_API_KEY",
-  "google_api_key": "$GOOGLE_API_KEY"
+  "openrouter_api_key": "$OPENROUTER_API_KEY",
+  "anthropic_api_key": "$ANTHROPIC_API_KEY"
 }
 ```
 
@@ -75,13 +74,13 @@ Example output (truncated):
     "expires_at": "2026-07-09T00:00:00.000Z"
   },
   "providers": {
-    "openai": {
+    "openrouter": {
       "status": "catalog",
       "models": [
         {
-          "route_id": "openai/gpt-5.2",
-          "provider": "openai",
-          "provider_model_id": "gpt-5.2",
+          "route_id": "openrouter/openai/gpt-5.2",
+          "provider": "openrouter",
+          "provider_model_id": "openai/gpt-5.2",
           "display_name": "GPT-5.2",
           "context_window": 400000,
           "supports_reasoning": true
@@ -100,7 +99,7 @@ Pass 2 or more `route_id` values to `--models`:
 
 ```bash
 consensus \
-  --models "openai/gpt-5.2,anthropic/claude-sonnet-4-5" \
+  --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5" \
   --prompt "Should we use a monorepo?"
 ```
 
@@ -114,9 +113,9 @@ The CLI returns JSON with schema `cli.consensus/2`:
   "schema": "cli.consensus/2",
   "models": [
     {
-      "route_id": "openai/gpt-5.2",
-      "provider": "openai",
-      "provider_model_id": "gpt-5.2",
+      "route_id": "openrouter/openai/gpt-5.2",
+      "provider": "openrouter",
+      "provider_model_id": "openai/gpt-5.2",
       "response": "monorepo ...",
       "stance": "for",
       "error": null

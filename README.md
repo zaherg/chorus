@@ -92,11 +92,13 @@ Minimum viable configuration:
 
 ```json
 {
-  "openai_api_key": "$OPENAI_API_KEY",
-  "anthropic_api_key": "$ANTHROPIC_API_KEY",
+  "openrouter_api_key": "$OPENROUTER_API_KEY",
   "log_level": "info"
 }
 ```
+
+Chorus supports OpenRouter, one custom OpenAI-compatible endpoint, Anthropic, Google Vertex AI, Amazon Bedrock, and Azure.
+OpenRouter is the recommended route for broad hosted-model access.
 
 Key values can be a literal string or an `$ENV_VAR` reference. At least one configured provider key is required to run a consensus.
 

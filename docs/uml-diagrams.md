@@ -105,13 +105,13 @@ classDiagram
         +number provider_timeout_ms
         +LogLevel log_level
         +number max_concurrent_processes
-        +string openai_api_key
-        +string anthropic_api_key
-        +string google_api_key
         +string openrouter_api_key
+        +string anthropic_api_key
+        +string google_vertex_api_key
+        +string amazon_bedrock_api_key
+        +string azure_api_key
         +string custom_api_key
         +string custom_url
-        +...18 more provider keys
     }
 
 
@@ -157,25 +157,12 @@ classDiagram
 
     class ProviderId {
         <<enumeration>>
-        openai
-        anthropic
-        google
-        openrouter
-        custom
-        alibaba
         amazon-bedrock
+        anthropic
         azure
-        cerebras
-        cohere
-        deepinfra
-        gateway
+        custom
         google-vertex
-        groq
-        mistral
-        perplexity
-        togetherai
-        vercel
-        xai
+        openrouter
     }
 
     class Stance {
@@ -256,7 +243,7 @@ sequenceDiagram
     participant Files as utils/files.ts
     participant AI as Vercel AI SDK
 
-    User->>CLI: consensus --models "openai/gpt-5.2,anthropic/claude-sonnet-4-5" --prompt "p"
+    User->>CLI: consensus --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5" --prompt "p"
     CLI->>Cmd: runConsensusCommand(args)
     Cmd->>Config: loadConfig()
     Config-->>Cmd: ChorusConfig
@@ -274,10 +261,10 @@ sequenceDiagram
     end
 
     par parallel queries (runSettledWithConcurrency)
-        Engine->>Reg: generateText("openai/gpt-5.2", prompt, systemPrompt)
+        Engine->>Reg: generateText("openrouter/openai/gpt-5.2", prompt, systemPrompt)
         Reg->>AI: ai.generateText()
         AI-->>Reg: text response
-        Reg-->>Engine: ParticipantResponse(openai/gpt-5.2)
+        Reg-->>Engine: ParticipantResponse(openrouter/openai/gpt-5.2)
     and
         Engine->>Reg: generateText("anthropic/claude-sonnet-4-5", prompt, systemPrompt)
         Reg->>AI: ai.generateText()
@@ -330,11 +317,12 @@ graph TD
 
     subgraph "External APIs"
         AI[Vercel AI SDK<br/>generateText]
-        P1[OpenAI API]
+        P1[Amazon Bedrock API]
         P2[Anthropic API]
-        P3[Google API]
-        P4[OpenRouter API]
-        P5[Custom Endpoint]
+        P3[Azure API]
+        P4[Google Vertex API]
+        P5[OpenRouter API]
+        P6[Custom Endpoint]
     end
 
     subgraph "Utilities"
@@ -386,6 +374,7 @@ graph TD
     AI --> P3
     AI --> P4
     AI --> P5
+    AI --> P6
 
     FL --> TK
 

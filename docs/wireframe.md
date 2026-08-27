@@ -10,7 +10,7 @@
 │                                                                              │
 │   ┌────────────────────────────────────────────────────────────────────┐    │
 │   │  $ consensus list-models --json                                     │    │
-│   │  $ consensus --models "openai/gpt-5.2,anthropic/claude-sonnet-4-5"  │    │
+│   │  $ consensus --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5"  │    │
 │   │  $ echo '{...}' | consensus --stdin-json                            │    │
 │   └────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
@@ -125,7 +125,7 @@
 │                          EXTERNAL (Vercel AI SDK v7)                         │
 │                                                                              │
 │   ┌────────┐  ┌───────────┐  ┌────────┐  ┌───────────┐  ┌────────┐        │
-│   │ OpenAI │  │ Anthropic │  │ Google │  │ OpenRouter│  │ Custom │  ...   │
+│   │ Bedrock│  │ Anthropic │  │ Azure  │  │ OpenRouter│  │ Custom │  ...   │
 │   │  API   │  │   API     │  │  API   │  │   API     │  │  API   │        │
 │   └────────┘  └───────────┘  └────────┘  └───────────┘  └────────┘        │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -165,8 +165,8 @@
 │  │  log_level: "info"        │  │   │  │  JSON Lines format       │   │
 │  │  max_concurrent: 5        │  │   │  │  Rotating (5MB x 3)      │   │
 │  │                            │  │   │  │  Secret redaction       │   │
-│  │  openai_api_key:          │  │   │  └──────────────────────────┘   │
-│  │    "$OPENAI_API_KEY"      │  │   │                                  │
+│  │  openrouter_api_key:          │  │   │  └──────────────────────────┘   │
+│  │    "$OPENROUTER_API_KEY"      │  │   │                                  │
 │  │  anthropic_api_key: ...   │  │   └──────────────────────────────────┘
 │  │  custom_url: ...          │  │
 │  │                            │  │   ┌──────────────────────────────────┐
@@ -192,7 +192,7 @@
      │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
      │  │   Model A   │  │   Model B   │  │   Model C   │  │
      │  │ route_id:   │  │ route_id:   │  │ route_id:   │  │
-     │  │ openai/gpt-5│  │ anthropic/  │  │ google/     │  │
+     │  │ openrouter/ │  │ anthropic/  │  │ vertex/     │  │
      │  │  stance:for │  │ sonnet-4-5  │  │ gemini-2.5  │  │
      │  │            │  │ st:against  │  │ st:neutral  │  │
      │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  │

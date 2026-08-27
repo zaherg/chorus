@@ -98,7 +98,7 @@ Handles `--version`, `--help`, and command dispatch. Routes flags starting with 
 ### `src/config.ts` -- Configuration
 
 - Validates via Zod `ChorusConfigSchema`
-- Supports 23 provider API key fields, plus runtime settings (`cli_timeout_ms`, `provider_timeout_ms`, `log_level`, `max_concurrent_processes`)
+- Supports 6 provider API key fields, plus runtime settings (`cli_timeout_ms`, `provider_timeout_ms`, `log_level`, `max_concurrent_processes`)
 - Resolves `$ENV_VAR` references in string values
 - First-run: creates `~/.config/chorus/` (0700) and `config.json` (0600)
 - Repairs broader permissions on existing files at load time
@@ -122,8 +122,8 @@ Central provider abstraction:
 
 - **Provider factories:** Creates AI SDK provider instances from config API keys
 - **Model resolution:** Delegates to `resolve-route.ts` to turn a `route_id` into a `BrokerModelInfo`; the registry then hands the provider-native model ID to the AI SDK
-- **`generateText()`:** Unified text generation across all providers. Maps thinking modes to provider-specific options (Anthropic thinking budget, OpenAI reasoning effort)
-- **Passthrough:** Provider-prefixed IDs for configured passthrough providers (`custom`, `gateway`) are passed through to the provider API
+- **`generateText()`:** Unified text generation across all providers. Maps thinking modes to provider-specific options (Anthropic thinking budget, OpenRouter reasoning effort)
+- **Passthrough:** Provider-prefixed IDs for the configured passthrough provider (`custom`) are passed through to the provider API
 
 ### `src/providers/model-catalog.ts` -- Catalog Cache
 
@@ -137,7 +137,7 @@ Central provider abstraction:
 
 - Single source of truth for the internal `ProviderId` to models.dev provider key relationship
 - Exposes `getModelsDevProviderKey`, `isCatalogBackedProvider`
-- `custom` and `gateway` map to `undefined` (passthrough)
+- `custom` maps to `undefined` (passthrough)
 
 ### `src/providers/resolve-route.ts` -- Route Resolution
 
@@ -145,7 +145,7 @@ Central provider abstraction:
 - Exact route: use that route when the configured catalog row matches
 - Unqualified input: accept only when exactly one configured provider has that exact provider-native ID
 - Ambiguous input: return a structured candidate list and exit code 3
-- Passthrough: accept provider-prefixed IDs for configured `custom` / `gateway` providers
+- Passthrough: accept provider-prefixed IDs for the configured `custom` provider
 
 ### Provider Tiers
 
@@ -153,7 +153,7 @@ Two support tiers:
 
 **Catalog:** providers with a models.dev key. Configured catalog providers return executable `route_id` rows from `list-models --json`.
 
-**Passthrough:** providers with no models.dev key (`custom`, `gateway`). The agent may still send provider-prefixed IDs that the provider API will accept or reject.
+**Passthrough:** the provider with no models.dev key (`custom`). The agent may still send provider-prefixed IDs that the provider API will accept or reject.
 
 ## Key Patterns
 
@@ -181,7 +181,7 @@ Used in config loading, stdin JSON parsing, catalog payload validation, and type
 | Dependency | Purpose |
 |---|---|
 | `ai` (Vercel AI SDK v7) | Text generation, streaming, provider interface |
-| `@ai-sdk/*` | Provider packages (OpenAI, Anthropic, Google, etc.) |
+| `@ai-sdk/*` | Provider packages (Amazon Bedrock, Anthropic, Azure, Google Vertex, OpenAI-compatible) |
 | `zod` v4 | Schema validation |
 | `@logtape/logtape` | Structured logging |
 | `@openrouter/ai-sdk-provider` | OpenRouter provider |

@@ -81,7 +81,7 @@ The project ships a single CLI binary, `consensus`, that brokers between agents 
 
 ```
 User invokes:  consensus list-models --json
-               consensus --models "openai/gpt-5.2,anthropic/claude-sonnet-4-5" --prompt "..."
+               consensus --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5" --prompt "..."
                                   │
                                   ▼
 ┌──────────────────────────────────────────────────────────────────┐
@@ -161,14 +161,14 @@ works.
 | `provider_timeout_ms` | Per-provider request timeout (default 120 000) |
 | `log_level` | `"debug" \| "info" \| "warn" \| "error"` (default `"info"`) |
 | `max_concurrent_processes` | Parallel model query limit (default 3) |
-| `openai_api_key` | OpenAI API key |
-| `anthropic_api_key` | Anthropic API key |
-| `google_api_key` | Google AI API key |
 | `openrouter_api_key` | OpenRouter API key |
+| `anthropic_api_key` | Anthropic API key |
+| `google_vertex_api_key` | Google Vertex AI API key |
+| `amazon_bedrock_api_key` | Amazon Bedrock API key |
+| `azure_api_key` | Azure API key |
 | `custom_api_key` | Custom endpoint API key |
 | `custom_url` | Custom endpoint base URL |
 | `allow_insecure_custom` | Set to `true` to allow `http://` custom URLs |
-| `<provider>_api_key` | One key slot per supported provider (Alibaba, Amazon Bedrock, Azure, Baseten, Cerebras, Cohere, DeepInfra, DeepSeek, Fireworks, Gateway, Google Vertex, Groq, Hugging Face, Mistral, Perplexity, TogetherAI, Vercel, xAI) |
 
 **Exports:**
 - `ChorusConfig` (Zod-inferred type)
@@ -249,7 +249,7 @@ pipeline. This is the bridge between the user's shell command and the engine.
    `--sequential`, `--files`, `--stdin-json`, `--schema`
 2. Validate: at least 2 models, prompt required (unless `--stdin-json`)
 3. Support **two input modes**:
-   - **Flag-based:** `--models "openai/gpt-5.2,anthropic/claude-sonnet-4-5" --prompt "..." --stance "openai/gpt-5.2=for"`
+   - **Flag-based:** `--models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5" --prompt "..." --stance "openrouter/openai/gpt-5.2=for"`
    - **JSON via stdin:** `--stdin-json` reads a structured JSON payload
      (validated against `StdinConsensusSchema`)
 4. Load config, load models.dev catalog, create `ProviderRegistry`, resolve `route_id` values
@@ -303,16 +303,14 @@ The central abstraction for interacting with LLM providers.
   provider with the provider-native model ID.
 - **Text generation** (`generateText`): Delegates to the Vercel AI SDK
   (`generateText` from `ai`). Handles:
-  - Thinking mode (Anthropic budget tokens, OpenAI reasoning effort)
+  - Thinking mode (Anthropic budget tokens, OpenRouter reasoning effort)
   - Timeout signals (merged parent + provider timeout)
   - Error classification: `timeout`, `execution`, `not_found`, `configuration`
 - **Provider factory caching:** SDK provider instances (OpenAI client,
   Anthropic client, etc.) are lazily created and cached per provider ID.
-- **Passthrough:** For configured passthrough providers (`custom`,
-  `gateway`), the registry passes provider-prefixed IDs through to the AI
-  SDK provider.
+- **Passthrough:** For the configured passthrough provider (`custom`), the registry passes provider-prefixed IDs through to the AI SDK provider.
 
-**Supported providers:** all 23 `ProviderId` slots. The 21 catalog-backed providers are Alibaba, Amazon Bedrock, Anthropic, Azure, Baseten, Cerebras, Cohere, DeepInfra, DeepSeek, Fireworks, Google, Google Vertex, Groq, Hugging Face, Mistral, OpenAI, OpenRouter, Perplexity, TogetherAI, Vercel, and xAI. The 2 passthrough providers are Custom and Gateway. Catalog-backed providers expose `route_id` rows from `models.list/1`; passthrough providers accept provider-prefixed IDs.
+**Supported providers:** 6 `ProviderId` slots. The 5 catalog-backed providers are Amazon Bedrock, Anthropic, Azure, Google Vertex AI, and OpenRouter. The 1 passthrough provider is Custom. Catalog-backed providers expose `route_id` rows from `models.list/1`; the passthrough provider accepts provider-prefixed IDs.
 
 #### 4.7.2 `model-catalog.ts` -- Models.dev Catalog Cache
 
@@ -337,7 +335,7 @@ catalog.
 
 Exports:
 - `getModelsDevProviderKey(providerId)` -- returns the models.dev key or
-  `undefined` for passthrough providers (`custom`, `gateway`).
+  `undefined` for the passthrough provider (`custom`).
 - `isCatalogBackedProvider(providerId)` -- `true` for catalog providers.
 
 Both functions read from the internal `PROVIDER_TO_MODELS_DEV_KEY` map.
@@ -357,7 +355,7 @@ Both functions read from the internal `PROVIDER_TO_MODELS_DEV_KEY` map.
    same provider-native ID, the broker returns a structured candidate list
    (`error.code: "ambiguous_model"`); the caller exits with code 3.
 4. **Passthrough:** provider-prefixed IDs targeting a configured passthrough
-   provider (`custom`, `gateway`) are accepted; the broker passes the
+   provider (`custom`) are accepted; the broker passes the
    provider-native ID to the AI SDK provider.
 
 The broker never suffix-matches model IDs.
@@ -648,9 +646,10 @@ Workflow file: `.github/workflows/release.yml`
 | Package | Purpose |
 |---|---|
 | `ai` (`^7.0.0`) | Vercel AI SDK -- core `generateText` function |
-| `@ai-sdk/openai` | OpenAI provider |
+| `@ai-sdk/amazon-bedrock` | Amazon Bedrock provider |
 | `@ai-sdk/anthropic` | Anthropic provider |
-| `@ai-sdk/google` | Google AI provider |
+| `@ai-sdk/azure` | Azure provider |
+| `@ai-sdk/google-vertex` | Google Vertex AI provider |
 | `@ai-sdk/openai-compatible` | Custom OpenAI-compatible endpoints |
 | `@openrouter/ai-sdk-provider` | OpenRouter provider |
 | `zod` (`^4.3.6`) | Schema validation |
