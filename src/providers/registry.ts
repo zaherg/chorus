@@ -1,26 +1,13 @@
-import { alibaba, createAlibaba } from "@ai-sdk/alibaba";
 import { bedrock, createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import { azure, createAzure } from "@ai-sdk/azure";
-import { baseten, createBaseten } from "@ai-sdk/baseten";
-import { cerebras, createCerebras } from "@ai-sdk/cerebras";
-import { cohere, createCohere } from "@ai-sdk/cohere";
-import { createDeepInfra, deepinfra } from "@ai-sdk/deepinfra";
-import { createDeepSeek, deepseek } from "@ai-sdk/deepseek";
-import { createFireworks, fireworks } from "@ai-sdk/fireworks";
-import { createGateway, gateway } from "@ai-sdk/gateway";
-import { createGoogleGenerativeAI, google } from "@ai-sdk/google";
 import { createVertex, vertex } from "@ai-sdk/google-vertex";
-import { createGroq, groq } from "@ai-sdk/groq";
-import { createHuggingFace, huggingface } from "@ai-sdk/huggingface";
-import { createMistral, mistral } from "@ai-sdk/mistral";
-import { createOpenAI, openai } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createPerplexity, perplexity } from "@ai-sdk/perplexity";
-import { createTogetherAI, togetherai } from "@ai-sdk/togetherai";
-import { createVercel, vercel } from "@ai-sdk/vercel";
-import { createXai, xai } from "@ai-sdk/xai";
-import { createOpenRouter, openrouter } from "@openrouter/ai-sdk-provider";
+import {
+    createOpenRouter,
+    type OpenRouterProviderOptions,
+    openrouter,
+} from "@openrouter/ai-sdk-provider";
 import {
     generateText as aiGenerateText,
     type JSONValue,
@@ -96,7 +83,6 @@ interface ProviderConfigEntry {
 }
 
 const PROVIDER_CONFIG: Record<ProviderId, ProviderConfigEntry> = {
-    alibaba: { apiKey: "alibaba_api_key", requiredConfig: ["alibaba_api_key"] },
     "amazon-bedrock": {
         apiKey: "amazon_bedrock_api_key",
         requiredConfig: ["amazon_bedrock_api_key"],
@@ -106,55 +92,18 @@ const PROVIDER_CONFIG: Record<ProviderId, ProviderConfigEntry> = {
         requiredConfig: ["anthropic_api_key"],
     },
     azure: { apiKey: "azure_api_key", requiredConfig: ["azure_api_key"] },
-    baseten: { apiKey: "baseten_api_key", requiredConfig: ["baseten_api_key"] },
-    cerebras: {
-        apiKey: "cerebras_api_key",
-        requiredConfig: ["cerebras_api_key"],
-    },
-    cohere: { apiKey: "cohere_api_key", requiredConfig: ["cohere_api_key"] },
     custom: {
         apiKey: "custom_api_key",
         requiredConfig: ["custom_url", "custom_api_key"],
     },
-    deepinfra: {
-        apiKey: "deepinfra_api_key",
-        requiredConfig: ["deepinfra_api_key"],
-    },
-    deepseek: {
-        apiKey: "deepseek_api_key",
-        requiredConfig: ["deepseek_api_key"],
-    },
-    fireworks: {
-        apiKey: "fireworks_api_key",
-        requiredConfig: ["fireworks_api_key"],
-    },
-    gateway: { apiKey: "gateway_api_key", requiredConfig: ["gateway_api_key"] },
-    google: { apiKey: "google_api_key", requiredConfig: ["google_api_key"] },
     "google-vertex": {
         apiKey: "google_vertex_api_key",
         requiredConfig: ["google_vertex_api_key"],
     },
-    groq: { apiKey: "groq_api_key", requiredConfig: ["groq_api_key"] },
-    huggingface: {
-        apiKey: "huggingface_api_key",
-        requiredConfig: ["huggingface_api_key"],
-    },
-    mistral: { apiKey: "mistral_api_key", requiredConfig: ["mistral_api_key"] },
-    openai: { apiKey: "openai_api_key", requiredConfig: ["openai_api_key"] },
     openrouter: {
         apiKey: "openrouter_api_key",
         requiredConfig: ["openrouter_api_key"],
     },
-    perplexity: {
-        apiKey: "perplexity_api_key",
-        requiredConfig: ["perplexity_api_key"],
-    },
-    togetherai: {
-        apiKey: "togetherai_api_key",
-        requiredConfig: ["togetherai_api_key"],
-    },
-    vercel: { apiKey: "vercel_api_key", requiredConfig: ["vercel_api_key"] },
-    xai: { apiKey: "xai_api_key", requiredConfig: ["xai_api_key"] },
 };
 
 const getProviderApiKey = (
@@ -210,13 +159,18 @@ const ANTHROPIC_THINKING_BUDGET: Record<ThinkingMode, number> = {
     max: 80_000,
 };
 
-const OPENAI_REASONING_EFFORT: Record<ThinkingMode, string> = {
-    minimal: "low",
+type OpenRouterReasoningEffort = Extract<
+    NonNullable<OpenRouterProviderOptions["reasoning"]>,
+    { effort: unknown }
+>["effort"];
+
+const OPENROUTER_REASONING_EFFORT = {
+    minimal: "minimal",
     low: "low",
     medium: "medium",
     high: "high",
-    max: "high",
-};
+    max: "xhigh",
+} as const satisfies Record<ThinkingMode, OpenRouterReasoningEffort>;
 
 // === Registry surface ===
 
@@ -275,10 +229,12 @@ export const createProviderRegistry = (
                         },
                     },
                 };
-            case "openai":
+            case "openrouter":
                 return {
-                    openai: {
-                        reasoningEffort: OPENAI_REASONING_EFFORT[thinkingMode],
+                    openrouter: {
+                        reasoning: {
+                            effort: OPENROUTER_REASONING_EFFORT[thinkingMode],
+                        },
                     },
                 };
             default:
@@ -291,50 +247,16 @@ export const createProviderRegistry = (
     ): Promise<ProviderFactory> => {
         const apiKey = getProviderApiKey(config, providerId);
         switch (providerId) {
-            case "alibaba":
-                return apiKey ? createAlibaba({ apiKey }) : alibaba;
             case "amazon-bedrock":
                 return apiKey ? createAmazonBedrock({ apiKey }) : bedrock;
             case "anthropic":
                 return apiKey ? createAnthropic({ apiKey }) : anthropic;
             case "azure":
                 return apiKey ? createAzure({ apiKey }) : azure;
-            case "baseten":
-                return apiKey ? createBaseten({ apiKey }) : baseten;
-            case "cerebras":
-                return apiKey ? createCerebras({ apiKey }) : cerebras;
-            case "cohere":
-                return apiKey ? createCohere({ apiKey }) : cohere;
-            case "deepinfra":
-                return apiKey ? createDeepInfra({ apiKey }) : deepinfra;
-            case "deepseek":
-                return apiKey ? createDeepSeek({ apiKey }) : deepseek;
-            case "fireworks":
-                return apiKey ? createFireworks({ apiKey }) : fireworks;
-            case "gateway":
-                return apiKey ? createGateway({ apiKey }) : gateway;
-            case "google":
-                return apiKey ? createGoogleGenerativeAI({ apiKey }) : google;
             case "google-vertex":
                 return apiKey ? createVertex({ apiKey }) : vertex;
-            case "groq":
-                return apiKey ? createGroq({ apiKey }) : groq;
-            case "huggingface":
-                return apiKey ? createHuggingFace({ apiKey }) : huggingface;
-            case "mistral":
-                return apiKey ? createMistral({ apiKey }) : mistral;
-            case "openai":
-                return apiKey ? createOpenAI({ apiKey }) : openai;
             case "openrouter":
                 return apiKey ? createOpenRouter({ apiKey }) : openrouter;
-            case "perplexity":
-                return apiKey ? createPerplexity({ apiKey }) : perplexity;
-            case "togetherai":
-                return apiKey ? createTogetherAI({ apiKey }) : togetherai;
-            case "vercel":
-                return apiKey ? createVercel({ apiKey }) : vercel;
-            case "xai":
-                return apiKey ? createXai({ apiKey }) : xai;
             case "custom":
                 return createOpenAICompatible({
                     apiKey: config.custom_api_key,
