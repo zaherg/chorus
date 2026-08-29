@@ -128,7 +128,7 @@ JSON to stdout with schema `cli.consensus/2`. Each requested model appears in `m
 
 ## `delegate` Skill
 
-**Path:** `skills/skills/delegate/SKILL.md`
+**Path:** `skills/delegate/SKILL.md`
 
 Guidance for delegating tasks to external CLI coding agents. This skill does not provide a built-in delegate command; instead, it documents how to shell out to agents directly.
 
@@ -141,7 +141,7 @@ Guidance for delegating tasks to external CLI coding agents. This skill does not
 
 ### Supported Agents
 
-Shell out to these CLI agents directly (must be installed separately on `PATH`):
+Shell out to these CLI agents directly (must be installed separately on `PATH`): Claude Code, Codex, OpenCode, GitHub Copilot CLI, and Pi Coding Agent.
 
 #### Claude Code
 
@@ -161,6 +161,58 @@ claude --print "Review this PR for security issues. Files: src/api/handlers.ts" 
 ```bash
 codex exec "Generate unit tests for src/utils/tokens.ts covering edge cases"
 ```
+
+#### Pi Coding Agent
+
+The canonical contract lives in `skills/delegate/SKILL.md`; this section mirrors its durable rules.
+Examples use POSIX shell syntax (variable guards and line continuations).
+
+Model precedence: an exact user-supplied provider-qualified model wins, then a separately supplied provider and provider-native model normalized to `provider/model-id`, then an established `PI_MODEL`, otherwise live discovery with `pi --list-models` and an explicit user choice.
+Never infer Pi's configured default, never take the first fuzzy result, and never switch models silently after a failure.
+Thinking precedence: the user-requested level wins, then an established `PI_THINKING`, otherwise the `high` fallback.
+Confirm the model reports thinking support for non-`off` levels, and report mismatches without silently downgrading.
+
+Discover live models first, then pass an exact provider-qualified model explicitly:
+
+```bash
+pi --list-models
+```
+
+##### Focused implementation delegation
+
+```bash
+: "${PI_MODEL:?Set PI_MODEL to an exact provider-qualified model from pi --list-models}"
+PI_THINKING="${PI_THINKING:-high}"
+
+pi --print \
+  --no-session \
+  --model "$PI_MODEL" \
+  --thinking "$PI_THINKING" \
+  "Implement focused tests for src/config.ts. Follow AGENTS.md, run the targeted tests, and report changed files and verification results."
+```
+
+##### Tool-restricted review delegation
+
+```bash
+: "${PI_MODEL:?Set PI_MODEL to an exact provider-qualified model from pi --list-models}"
+PI_THINKING="${PI_THINKING:-high}"
+
+pi --print \
+  --no-session \
+  --model "$PI_MODEL" \
+  --thinking "$PI_THINKING" \
+  --no-extensions \
+  --tools read,grep,find,ls \
+  "Review error handling in src/providers/. Report concrete findings with file references. Do not modify files."
+```
+
+The review tool allowlist excludes mutation and shell tools, and `--no-extensions` disables discovered extensions.
+This is a tool restriction, not an operating-system sandbox, and it is not safe execution for untrusted repositories.
+Default commands omit both `--approve` and `--no-approve`; apply either trust override only when the user intentionally requests it.
+On failure, capture the exit code, report the exact harness, model, thinking level, working directory, and task stage with the error, then stop.
+Retrying the same command, changing models, or changing harnesses requires user authorization.
+Before a real provider invocation, the safe readiness check is `pi auth check --model "$PI_MODEL" --no-refresh --json`.
+Never run credential-emitting operations such as `--credentials`, `pi auth print-api-key`, or `pi auth print-bearer-token`.
 
 #### OpenCode
 

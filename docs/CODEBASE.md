@@ -496,10 +496,11 @@ binary from GitHub Releases. Features:
 
 ### `skills/delegate/SKILL.md`
 Documents how agents can shell out to external CLI coding agents (Claude
-Code, Codex, OpenCode, GitHub Copilot) for sub-tasks. Covers:
+Code, Codex, OpenCode, GitHub Copilot, Pi Coding Agent) for sub-tasks. Covers:
 - Direct CLI invocations
 - Parallel delegation patterns
 - Delegate + consensus workflow
+- Model-explicit, ephemeral Pi delegation with tool-restricted reviews
 
 ---
 
@@ -524,11 +525,12 @@ Releases are driven by GitHub Actions. `prepare-release.yml` (manual dispatch) c
 | `model-catalog.test.ts` | `loadCatalog`: cache miss / fresh / stale / refresh failure, `models.list.error/1` |
 | `provider-map.test.ts` | `getModelsDevProviderKey`, inverse lookup, passthrough detection |
 | `resolve-route.test.ts` | Exact / unqualified / ambiguous / passthrough resolution |
+| `custom-url.test.ts` | Custom provider URL and connection-time hostname validation |
 | `files.test.ts` | `embedFiles`: allowed paths, non-existent files, outside-allowlist, dedup, empty input |
-| `docs.test.ts` | Documentation contract: no stale references to old names |
 | `installer.test.ts` | `install.sh`: binary download, checksum verification, `--prefix`, `--no-verify`, quarantine stripping, unsupported platforms |
+| `logger.test.ts` | Secret redaction, log-level resolution, and context immutability |
 | `package-files.test.ts` | Package manifest integrity: bin entry, files array, `.gitignore` |
-| `release-contract.test.ts` | Release workflow: artifact naming, version bump, malformed version rejection |
+| `delegate-skill.test.ts` | Delegate skill contract: Pi command flags, model and thinking precedence, trust, credentials, and failure behavior |
 
 **Testing conventions:**
 - **Module mocking** via `bun:test`'s `mock.module` is used pervasively:

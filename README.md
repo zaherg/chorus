@@ -131,7 +131,7 @@ The skills follow the [Agent Skills specification](https://agentskills.io/specif
 
 ### delegate
 
-[`skills/delegate/`](./skills/delegate/SKILL.md) shells out to local CLI coding agents for focused subtasks or parallel independent work. It targets locally installed agents only: Claude Code, Codex, OpenCode, and GitHub Copilot. If an agent is not installed on the machine, delegate does not run it.
+[`skills/delegate/`](./skills/delegate/SKILL.md) shells out to local CLI coding agents for focused subtasks or parallel independent work. It targets locally installed agents only: Claude Code, Codex, OpenCode, GitHub Copilot, and Pi Coding Agent. If an agent is not installed on the machine, delegate does not run it.
 
 ## Development
 

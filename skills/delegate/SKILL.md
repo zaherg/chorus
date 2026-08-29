@@ -1,13 +1,13 @@
 ---
 name: delegate
-description: Use when you need to shell out to external CLI coding agents such as Claude Code, Codex, OpenCode, or GitHub Copilot for focused sub-tasks or parallel independent work.
+description: Use when you need to shell out to external CLI coding agents such as Claude Code, Codex, OpenCode, GitHub Copilot, or Pi Coding Agent for focused sub-tasks or parallel independent work.
 ---
 
 # Delegate
 
 ## When to Use
 
-Delegate tasks to specialized CLI agents (Claude Code, Codex, OpenCode, GitHub Copilot) when you need:
+Delegate tasks to specialized CLI agents (Claude Code, Codex, OpenCode, GitHub Copilot, Pi Coding Agent) when you need:
 - A fresh context window for a complex sub-task
 - A different agent's perspective on a problem
 - Parallel execution of independent tasks
@@ -62,6 +62,156 @@ codex review "Review this pull request for security issues. Focus on: SQL inject
 ```
 
 
+### Pi Coding Agent
+
+For delegated Pi tasks, run Pi non-interactively with `--print` and always pass explicit model and thinking values.
+Explicit model and thinking selection is a delegate workflow policy, not a Pi CLI requirement.
+Run Pi from the root of the project that owns the delegated task.
+The command examples in this section use POSIX shell syntax, including variable guards and line continuations, and are written for the macOS and zsh environment of this repository.
+They do not claim native PowerShell compatibility.
+
+Model selection follows this exact precedence:
+
+1. If the user supplied an exact provider-qualified Pi model, use it unchanged.
+2. If the user supplied a provider and a provider-native model separately, normalize them to `provider/model-id`.
+3. If the user or project already established `PI_MODEL`, use that exact value.
+4. Otherwise run `pi --list-models`, present the relevant live candidates, and ask the user to choose.
+
+Never infer a model from Pi's configured default.
+Never silently select the first fuzzy-search result.
+Never silently switch models after a failure.
+Do not reconstruct model identifiers from memory.
+
+The provider-native model may itself contain a slash, so provider `openrouter` plus native model `openai/gpt-5.4` becomes `openrouter/openai/gpt-5.4`.
+
+When the user supplies the provider and provider-native model separately, normalize them before use:
+
+```bash
+PI_PROVIDER="provider"
+PI_PROVIDER_MODEL="model-id"
+PI_MODEL="${PI_PROVIDER}/${PI_PROVIDER_MODEL}"
+```
+
+These values are illustrative placeholders.
+Always use values from the user or from current `pi --list-models` output.
+
+When the user already supplied an exact provider-qualified model, set `PI_MODEL` to that exact `provider/model-id` value.
+
+Discover live models first, then select the exact provider and model pair from the output:
+
+```bash
+pi --list-models
+```
+
+Narrow the catalog with an optional search term:
+
+```bash
+pi --list-models gpt-5.4
+```
+
+If the user did not name an exact model and no established `PI_MODEL` value exists, stop and ask the user to choose from the live list.
+
+The `PI_MODEL` shell guard in the examples checks presence only.
+It rejects an unset or empty value, but it cannot prove exact provider qualification or catalog membership.
+Exact qualification is established by input provenance and the live catalog, never by counting slashes in the identifier.
+
+Thinking-level selection follows this exact precedence:
+
+1. Use the exact thinking level requested by the user.
+2. If the user did not request one and an established `PI_THINKING` value exists, use it.
+3. Otherwise use `high` as the fallback for the implementation and review examples below.
+
+Never silently change a requested thinking level.
+The examples express this precedence with an explicit variable so no command hardcodes over a user choice:
+
+```bash
+PI_THINKING="${PI_THINKING:-high}"
+```
+
+Before executing a task with a non-`off` thinking level, confirm that the selected model reports thinking support in `pi --list-models`.
+If the requested level is unsupported, report the mismatch and ask the user whether to select another model or explicitly use `off`.
+Never silently downgrade a requested thinking level.
+
+Every one-shot task keeps `--print` and `--no-session`.
+Use a persistent session only when the user explicitly requests resumable work.
+Do not add continuation or resume flags to the default examples.
+
+Shared input preparation for the task examples:
+
+```bash
+: "${PI_MODEL:?Set PI_MODEL to an exact provider-qualified model from pi --list-models}"
+PI_THINKING="${PI_THINKING:-high}"
+```
+
+#### Focused implementation delegation
+
+Coding tools stay enabled because the task authorizes changes.
+
+```bash
+: "${PI_MODEL:?Set PI_MODEL to an exact provider-qualified model from pi --list-models}"
+PI_THINKING="${PI_THINKING:-high}"
+
+pi --print \
+  --no-session \
+  --model "$PI_MODEL" \
+  --thinking "$PI_THINKING" \
+  "Implement focused tests for src/config.ts. Follow AGENTS.md, run the targeted tests, and report changed files and verification results."
+```
+
+#### Tool-restricted review delegation
+
+This review uses no mutation-capable tools and no discovered extensions.
+
+```bash
+: "${PI_MODEL:?Set PI_MODEL to an exact provider-qualified model from pi --list-models}"
+PI_THINKING="${PI_THINKING:-high}"
+
+pi --print \
+  --no-session \
+  --model "$PI_MODEL" \
+  --thinking "$PI_THINKING" \
+  --no-extensions \
+  --tools read,grep,find,ls \
+  "Review error handling in src/providers/. Report concrete findings with file references. Do not modify files."
+```
+
+The tool allowlist excludes `bash`, `powershell`, `edit`, and `write`, and `--no-extensions` disables discovered extensions.
+This is a tool restriction, not an operating-system sandbox, and it is not safe execution for untrusted repositories.
+Untrusted repositories require an external sandbox or container.
+Inspect the worktree after any Pi run inside a project.
+
+Non-interactive Pi runs do not display a project-trust prompt.
+Pi applies a saved trust decision or the configured non-interactive fallback.
+The default commands above omit `--approve` because it can authorize unreviewed project-local executable resources.
+The default commands also omit `--no-approve` because it can suppress intentionally configured project behavior.
+Use either override only when the user intentionally requests that trust behavior.
+Context files stay enabled in project task examples, so Pi receives `AGENTS.md` and `CLAUDE.md` project instructions.
+
+Before running Pi against a provider, the safe readiness check is:
+
+```bash
+: "${PI_MODEL:?Set PI_MODEL to an exact provider-qualified model from pi --list-models}"
+
+pi auth check \
+  --model "$PI_MODEL" \
+  --no-refresh \
+  --json
+```
+
+Run this check only when preparing for an actual Pi provider invocation.
+Catalog discovery and static documentation validation do not require it.
+Never run credential-emitting operations during validation, specifically `--credentials`, `pi auth print-api-key`, and `pi auth print-bearer-token`.
+Never place credentials in command arguments, prompts, logs, examples, tests, or committed configuration.
+
+On failure, capture the process exit code and preserve relevant stdout and stderr without exposing credentials or unrelated sensitive data.
+Report the exact harness, the exact model, the exact thinking level, the working directory, and the failed task stage.
+Report the exact error, or a safely redacted equivalent when the raw error contains secrets.
+Then stop.
+Do not retry the same command automatically.
+Do not retry with another model automatically.
+Do not switch to another harness automatically.
+Retry or substitute only after explicit user authorization.
+
 ### OpenCode
 
 ```bash
@@ -110,6 +260,6 @@ cd /path/to/project && claude --print "Run the test suite and fix any failures"
 
 ## Notes
 
-- Each CLI agent must be installed separately and available on PATH.
+- Each CLI agent (including Pi Coding Agent) must be installed separately and available on PATH.
 - Skills does not manage or install these agents.
 - For structured multi-model debate, use `consensus` instead of manual delegation.
