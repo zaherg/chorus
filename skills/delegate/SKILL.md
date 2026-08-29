@@ -17,7 +17,7 @@ Delegate tasks to specialized CLI agents (Claude Code, Codex, OpenCode, GitHub C
 - Never try another agent if the one the user asked for didn't work or sidetracked.
 </critical>
 
-Skills no longer has a built-in delegate command. Instead, shell out to the CLI agents directly.
+Skills has no built-in delegate command. Instead, shell out to the CLI agents directly.
 
 For structured multi-model debate, use `consensus` when `consensus` is available on `PATH`, or `bin/consensus` from an installed consensus skill folder after running `scripts/install.sh`.
 
@@ -25,17 +25,21 @@ For structured multi-model debate, use `consensus` when `consensus` is available
 
 ### Claude Code
 
+With a specific prompt:
+
 ```bash
 claude --print "Refactor the authentication module to use async/await instead of callbacks. Files: src/auth.ts, src/auth_test.ts"
 ```
 
-With a specific role/prompt:
+With a specific prompt and a model:
 
 ```bash
 claude --print "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts" --model claude-sonnet-4-20250514
 ```
 
 ### Codex (OpenAI)
+
+With a specific prompt:
 
 ```bash
 codex exec "Generate unit tests for src/utils/tokens.ts covering edge cases: empty strings, unicode, very long inputs"
@@ -69,6 +73,8 @@ Explicit model and thinking selection is a delegate workflow policy, not a Pi CL
 Run Pi from the root of the project that owns the delegated task.
 The command examples in this section use POSIX shell syntax, including variable guards and line continuations, and are written for the macOS and zsh environment of this repository.
 They do not claim native PowerShell compatibility.
+
+Make sure to use an equivalent commands that matches the user operating system.
 
 Model selection follows this exact precedence:
 
@@ -185,7 +191,7 @@ Pi applies a saved trust decision or the configured non-interactive fallback.
 The default commands above omit `--approve` because it can authorize unreviewed project-local executable resources.
 The default commands also omit `--no-approve` because it can suppress intentionally configured project behavior.
 Use either override only when the user intentionally requests that trust behavior.
-Context files stay enabled in project task examples, so Pi receives `AGENTS.md` and `CLAUDE.md` project instructions.
+Context files stay enabled in project task examples, so Pi receives `AGENTS.md` and/or `CLAUDE.md` project instructions.
 
 Before running Pi against a provider, the safe readiness check is:
 
