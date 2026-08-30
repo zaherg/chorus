@@ -27,16 +27,16 @@
         "changelog:update": "git-cliff --config .github/config/cliff.toml -o CHANGELOG.md"
     },
     "dependencies": {
-        "@ai-sdk/amazon-bedrock": "^5.0.66",
-        "@ai-sdk/anthropic": "^4.0.44",
-        "@ai-sdk/azure": "^4.0.52",
-        "@ai-sdk/google-vertex": "^5.0.67",
-        "@ai-sdk/openai-compatible": "^3.0.39",
+        "@ai-sdk/amazon-bedrock": "^5.0.67",
+        "@ai-sdk/anthropic": "^4.0.45",
+        "@ai-sdk/azure": "^4.0.53",
+        "@ai-sdk/google-vertex": "^5.0.69",
+        "@ai-sdk/openai-compatible": "^3.0.40",
         "@logtape/file": "^2.3.2",
         "@logtape/logtape": "^2.3.2",
         "@openrouter/ai-sdk-provider": "^3.0.0",
-        "ai": "^7.0.83",
-        "zod": "^4.4.3"
+        "ai": "^7.0.84",
+        "zod": "^4.5.2"
     },
     "devDependencies": {
         "@types/bun": "^1.4.0",

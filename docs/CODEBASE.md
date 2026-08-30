@@ -10,8 +10,8 @@
 | Field | Value |
 |---|---|
 | **Package** | `@zaherg/chorus` |
-| **Runtime** | [Bun](https://bun.sh) (`1.3.9`) |
-| **Language** | TypeScript (`5.9.3`) |
+| **Runtime** | [Bun](https://bun.sh) (`1.4.0`) |
+| **Language** | TypeScript (`7.0.2`) |
 | **Binary name** | `consensus` |
 | **Entry point** | `src/cli.ts` → `dist/cli.js` |
 | **Package manager** | Bun (no npm/yarn lockfiles) |
@@ -85,44 +85,44 @@ User invokes:  consensus list-models --json
                                   │
                                   ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  cli.ts (runCli)                                                  │
-│  ├─ Routes to commands/consensus.ts or commands/list-models.ts    │
-│  └─ If no subcommand, treats bare flags as `consensus`            │
+│  cli.ts (runCli)                                                 │
+│  ├─ Routes to commands/consensus.ts or commands/list-models.ts   │
+│  └─ If no subcommand, treats bare flags as `consensus`           │
 └──────────────────────────────┬───────────────────────────────────┘
                                │
                                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  config.ts (loadConfig)                                           │
-│  ├─ Validates config.json (ChorusConfigSchema)                    │
-│  └─ Returns ChorusConfig + Paths                                  │
+│  config.ts (loadConfig)                                          │
+│  ├─ Validates config.json (ChorusConfigSchema)                   │
+│  └─ Returns ChorusConfig + Paths                                 │
 └──────────────────────────────┬───────────────────────────────────┘
                                │
               ┌────────────────┴─────────────────┐
               │  list-models path                │  consensus path
               ▼                                  ▼
 ┌─────────────────────────────────┐  ┌────────────────────────────────┐
-│ providers/model-catalog.ts       │  │ providers/resolve-route.ts     │
+│ providers/model-catalog.ts      │  │ providers/resolve-route.ts     │
 │ ├─ Read models-cache/*.json     │  │ ├─ Parse `route_id`            │
-│ ├─ Refresh from models.dev       │  │ ├─ Exact / unqualified /       │
-│ │   on miss or --refresh         │  │ │   passthrough resolution    │
-│ ├─ Validate (CatalogJsonSchema)  │  │ └─ Return BrokerModelInfo[]    │
-│ └─ Emit models.list/1            │  │                                │
-│    filtered to configured        │  │ providers/registry.ts          │
-│    providers                     │  │ ├─ Create AI SDK provider      │
+│ ├─ Refresh from models.dev      │  │ ├─ Exact / unqualified /       │
+│ │   on miss or --refresh        │  │ │   passthrough resolution     │
+│ ├─ Validate (CatalogJsonSchema) │  │ └─ Return BrokerModelInfo[]    │
+│ └─ Emit models.list/1           │  │                                │
+│    filtered to configured       │  │ providers/registry.ts          │
+│    providers                    │  │ ├─ Create AI SDK provider      │
 └─────────────────────────────────┘  │ ├─ Call generateText() per     │
-                                     │ │   participant                 │
-                                     │ └─ Optional synthesis call      │
+                                     │ │   participant                │
+                                     │ └─ Optional synthesis call     │
                                      │     (only when                 │
                                      │      --synthesis-model set)    │
                                      └─────────────┬──────────────────┘
                                                    │
                                                    ▼
                                      ┌────────────────────────────────┐
-                                     │  consensus.ts (runConsensus)    │
-                                     │  ├─ Fan out participant calls   │
-                                     │  ├─ Collect raw responses       │
-                                     │  └─ Emit ConsensusResult        │
-                                     │     (cli.consensus/2)           │
+                                     │  consensus.ts (runConsensus)   │
+                                     │  ├─ Fan out participant calls  │
+                                     │  ├─ Collect raw responses      │
+                                     │  └─ Emit ConsensusResult       │
+                                     │     (cli.consensus/2)          │
                                      └────────────────────────────────┘
 ```
 
