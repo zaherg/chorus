@@ -1,0 +1,2 @@
+preload = ["zod/compile"]
+telemetry = false
