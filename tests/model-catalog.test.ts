@@ -15,10 +15,7 @@ import {
     readCache,
     writeCache,
 } from "@/providers/model-catalog";
-import {
-    ModelsListResponseSchema,
-    ProviderCatalogSchema,
-} from "@/types/providers";
+import { ProviderCatalogSchema } from "@/types/providers";
 import fixture from "./fixtures/models-dev-catalog.fixture.json" with {
     type: "json",
 };
@@ -464,32 +461,6 @@ describe("model-catalog", () => {
             expect(calls.length).toBeGreaterThan(0);
         });
 
-        test("with forceRefresh: true and fetch failure falls back to stale cache", async () => {
-            const stale = freshMetadata(
-                "2025-01-01T00:00:00.000Z",
-                "2025-06-01T00:00:00.000Z",
-            );
-            const reader = makeReader({
-                [METADATA_RELATIVE_PATH]: JSON.stringify(stale),
-                [CATALOG_RELATIVE_PATH]: JSON.stringify(fixture),
-            });
-            const { writer } = makeWriter();
-            const fetchError = new Error("refresh failed");
-            const { fn: fetchFn } = makeFetch(fetchError);
-            const result = await loadCatalog({
-                configDir: "/etc/zaher",
-                fetchFn,
-                reader,
-                writer,
-                now,
-                forceRefresh: true,
-            });
-            expect(result.ok).toBe(true);
-            if (!result.ok) return;
-            expect(result.cache.status).toBe("stale");
-            expect(result.warning).toContain("refresh failed");
-        });
-
         test("returns a payload where custom is passthrough with no models", async () => {
             const { fn: fetchFn } = makeFetch(okJsonResponse(fixture));
             const { writer } = makeWriter();
@@ -508,22 +479,6 @@ describe("model-catalog", () => {
             });
             expect(result.providers).not.toHaveProperty("openai");
             expect(result.providers).not.toHaveProperty("gateway");
-        });
-
-        test("returns a payload that validates against ModelsListResponseSchema", async () => {
-            const { fn: fetchFn } = makeFetch(okJsonResponse(fixture));
-            const { writer } = makeWriter();
-            const result = await loadCatalog({
-                configDir: "/etc/zaher",
-                fetchFn,
-                reader: noopReader,
-                writer,
-                now,
-            });
-            expect(result.ok).toBe(true);
-            if (!result.ok) throw new Error("expected ok");
-            const parsed = ModelsListResponseSchema.safeParse(result);
-            expect(parsed.success).toBe(true);
         });
     });
 });

@@ -1,28 +1,35 @@
 import { describe, expect, it } from "bun:test";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const repoRoot = new URL("..", import.meta.url).pathname;
-
 describe("package files", () => {
-    it("keeps npm CLI bin on the built runtime instead of the skill-local installer", async () => {
-        const pkg = JSON.parse(
-            await readFile(join(repoRoot, "package.json"), "utf8"),
+    it("packs the CLI, skill installer, and no downloaded skill-local binaries", async () => {
+        const destination = await mkdtemp(
+            join(tmpdir(), "chorus-package-files-test-"),
         );
+        try {
+            const archivePath = (
+                await Bun.$`bun pm pack --destination ${destination} --ignore-scripts --quiet`.text()
+            ).trim();
+            const entries = (await Bun.$`tar -tzf ${archivePath}`.text()).split(
+                "\n",
+            );
 
-        expect(pkg.bin).toEqual({ consensus: "dist/cli.js" });
-        expect(pkg.files).toContain("dist");
-        expect(pkg.files).toContain("skills");
-    });
+            const packedPackage = JSON.parse(
+                await Bun.$`tar -xOf ${archivePath} package/package.json`.text(),
+            ) as { bin: unknown };
 
-    it("ignores downloaded skill-local binaries while keeping installer files publishable", async () => {
-        const gitignore = await readFile(join(repoRoot, ".gitignore"), "utf8");
-        const pkg = JSON.parse(
-            await readFile(join(repoRoot, "package.json"), "utf8"),
-        );
-
-        expect(gitignore).toContain("skills/**/bin/");
-        expect(pkg.files).not.toContain("skills/**/bin");
-        expect(pkg.files).toContain("skills");
+            expect(entries).toContain("package/dist/cli.js");
+            expect(packedPackage.bin).toEqual({ consensus: "dist/cli.js" });
+            expect(entries).toContain(
+                "package/skills/consensus/scripts/install.sh",
+            );
+            expect(entries.some((entry) => entry.includes("/bin/"))).toBe(
+                false,
+            );
+        } finally {
+            await rm(destination, { recursive: true, force: true });
+        }
     });
 });

@@ -160,19 +160,25 @@ describe("skill-local installer", () => {
     it("installs the matching released binary under the copied skill directory by default", async () => {
         const skillDir = await createCopiedSkill();
         const { binDir, logPath } = await createTooling();
+        const installedPath = join(skillDir, "bin", "consensus");
 
         const result = await runInstaller(skillDir, binDir);
 
         expect(result.exitCode).toBe(0);
-        expect(await readFile(join(skillDir, "bin", "consensus"), "utf8")).toBe(
-            "released binary\n",
-        );
-        expect(
-            (await stat(join(skillDir, "bin", "consensus"))).mode & 0o111,
-        ).toBeGreaterThan(0);
-        expect(await readFile(logPath, "utf8")).toContain(
-            "consensus-darwin-arm64",
-        );
+        expect(await readFile(installedPath, "utf8")).toBe("released binary\n");
+        expect((await stat(installedPath)).mode & 0o111).toBeGreaterThan(0);
+        const log = await readFile(logPath, "utf8");
+        expect(log).toContain("consensus-darwin-arm64");
+        const xattrCalls = log
+            .split("\n")
+            .filter((line) => line.startsWith("xattr "));
+        expect(xattrCalls).toEqual([
+            expect.stringMatching(
+                /xattr -d com\.apple\.quarantine .+\/consensus-darwin-arm64$/,
+            ),
+            `xattr -d com.apple.quarantine ${installedPath}.tmp`,
+            `xattr -d com.apple.quarantine ${installedPath}`,
+        ]);
     });
 
     it("aborts on checksum mismatch without installing the executable", async () => {
@@ -206,18 +212,6 @@ describe("skill-local installer", () => {
         expect(await readFile(logPath, "utf8")).not.toContain(
             "checksums.sha256",
         );
-    });
-
-    it("strips macOS quarantine attributes from temporary and final binary paths", async () => {
-        const skillDir = await createCopiedSkill();
-        const { binDir, logPath } = await createTooling();
-
-        const result = await runInstaller(skillDir, binDir);
-
-        expect(result.exitCode).toBe(0);
-        const log = await readFile(logPath, "utf8");
-        expect(log).toContain("xattr -d com.apple.quarantine");
-        expect(log).toContain(join(skillDir, "bin", "consensus"));
     });
 
     it("fails clearly for unsupported platforms", async () => {

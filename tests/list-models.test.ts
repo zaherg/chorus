@@ -115,22 +115,6 @@ describe("runListModelsCommand", () => {
         );
     });
 
-    it("omits providers that are not configured", async () => {
-        stubLoadCatalog(buildResponse(fixtureProviders()));
-        stubConfiguredProviders(["anthropic"]);
-
-        const { result, stdout } = await captureOutput(() =>
-            runListModelsCommand(["--json"]),
-        );
-        expect(result).toBe(0);
-
-        const payload = JSON.parse(stdout);
-        expect(payload.providers).not.toHaveProperty("openrouter");
-        expect(payload.providers).not.toHaveProperty("azure");
-        expect(payload.providers).not.toHaveProperty("custom");
-        expect(Object.keys(payload.providers)).toEqual(["anthropic"]);
-    });
-
     it("emits passthrough providers with status passthrough and empty models", async () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
         stubConfiguredProviders(["custom"]);

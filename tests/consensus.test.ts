@@ -165,7 +165,12 @@ const buildRequest = (overrides: {
 
 describe("runConsensus", () => {
     it("returns cli.consensus/2 with 2 successful participants and no synthesis", async () => {
-        const registry = mockRegistry();
+        const callLog: Array<{
+            model: string;
+            prompt: string;
+            options?: unknown;
+        }> = [];
+        const registry = mockRegistry({ callLog });
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
@@ -186,10 +191,19 @@ describe("runConsensus", () => {
         expect(result.models[0].stance).toBe("for");
         expect(result.models[1].route_id).toBe("gemini-2.5-pro");
         expect(result.models[1].stance).toBe("against");
+        expect(result.synthesis).toBeNull();
+        expect(result.synthesis_error).toBeNull();
+        expect(callLog).toHaveLength(2);
     });
 
-    it("returns ok with one failed and one successful participant", async () => {
+    it("returns ok and runs synthesis with one failed and one successful participant", async () => {
+        const callLog: Array<{
+            model: string;
+            prompt: string;
+            options?: unknown;
+        }> = [];
         const registry = mockRegistry({
+            callLog,
             generateTextImpl: async (modelId) =>
                 modelId === "gemini-2.5-pro"
                     ? failResult()
@@ -201,6 +215,7 @@ describe("runConsensus", () => {
             ...buildRequest({
                 models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }],
                 parallel: true,
+                synthesisModel: "claude-sonnet-4-20250514",
             }),
         });
 
@@ -215,6 +230,12 @@ describe("runConsensus", () => {
         expect(failed?.error?.retryable).toBe(true);
         expect(succeeded?.route_id).toBe("gpt-5.2");
         expect(succeeded?.response).toBe("yes");
+        expect(result.synthesis).toBe("yes");
+        expect(result.synthesis_error).toBeNull();
+        expect(callLog).toHaveLength(3);
+        expect(
+            callLog.some((call) => call.model === "claude-sonnet-4-20250514"),
+        ).toBe(true);
     });
 
     it("returns ok=false when a single participant call fails and no synthesis is set", async () => {
@@ -233,36 +254,6 @@ describe("runConsensus", () => {
         expect(result.ok).toBe(false);
         if (result.ok) return;
         expect(result.errors[0]).toMatch(/All participant|fail/i);
-    });
-
-    it("returns ok with 3 participants, one failed, two succeeded, and synthesis populated", async () => {
-        const registry = mockRegistry({
-            generateTextImpl: async (modelId) =>
-                modelId === "gemini-2.5-pro"
-                    ? failResult()
-                    : okResult(modelId, `ok-${modelId}`),
-        });
-
-        const result = await runConsensus({
-            providerRegistry: registry,
-            ...buildRequest({
-                models: [
-                    { model: "gpt-5.2" },
-                    { model: "gemini-2.5-pro" },
-                    { model: "claude-sonnet-4-20250514" },
-                ],
-                parallel: true,
-                synthesisModel: "claude-sonnet-4-20250514",
-            }),
-        });
-
-        expect(result.ok).toBe(true);
-        if (!result.ok) return;
-        expect(result.models).toHaveLength(3);
-        const failed = result.models.find((m) => m.error !== null);
-        expect(failed?.route_id).toBe("gemini-2.5-pro");
-        expect(result.synthesis).toBeTruthy();
-        expect(result.synthesis_error).toBeNull();
     });
 
     it("populates synthesis when --synthesis-model is set and the call succeeds", async () => {
@@ -319,28 +310,6 @@ describe("runConsensus", () => {
         });
         expect(result.models).toHaveLength(2);
         expect(result.models.every((m) => m.response !== null)).toBe(true);
-    });
-
-    it("does not call generateText for synthesis when --synthesis-model is absent", async () => {
-        const callLog: Array<{
-            model: string;
-            prompt: string;
-            options?: unknown;
-        }> = [];
-        const registry = mockRegistry({ callLog });
-        const result = await runConsensus({
-            providerRegistry: registry,
-            ...buildRequest({
-                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }],
-                parallel: true,
-            }),
-        });
-
-        expect(result.ok).toBe(true);
-        if (!result.ok) return;
-        expect(callLog).toHaveLength(2);
-        expect(result.synthesis).toBeNull();
-        expect(result.synthesis_error).toBeNull();
     });
 
     it("runs sequentially when parallel is false and participants see prior responses", async () => {

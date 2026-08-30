@@ -4,29 +4,18 @@ import {
     getModelsDevProviderKey,
     isCatalogBackedProvider,
 } from "@/providers/provider-map";
-import { type ProviderId, providerIdValues } from "@/types/providers";
-
-const CATALOG_BACKED: ReadonlyArray<ProviderId> = [
-    "amazon-bedrock",
-    "anthropic",
-    "azure",
-    "google-vertex",
-    "openrouter",
-];
-
-const EXPECTED_KEYS: Readonly<Record<ProviderId, string | undefined>> = {
-    "amazon-bedrock": "amazon-bedrock",
-    anthropic: "anthropic",
-    azure: "azure",
-    custom: undefined,
-    "google-vertex": "google-vertex",
-    openrouter: "openrouter",
-};
-
-const PASSTHROUGH: ReadonlyArray<ProviderId> = ["custom"];
+import { providerIdValues } from "@/types/providers";
 
 describe("provider-map", () => {
-    test("exports exactly the six retained provider IDs", () => {
+    test("retains the public provider set and keeps catalog mapping consistent", () => {
+        const expectedModelsDevKeys = [
+            ["amazon-bedrock", "amazon-bedrock"],
+            ["anthropic", "anthropic"],
+            ["azure", "azure"],
+            ["google-vertex", "google-vertex"],
+            ["openrouter", "openrouter"],
+        ] as const;
+
         expect(providerIdValues).toEqual([
             "amazon-bedrock",
             "anthropic",
@@ -35,31 +24,13 @@ describe("provider-map", () => {
             "google-vertex",
             "openrouter",
         ]);
-    });
 
-    describe("getModelsDevProviderKey", () => {
-        test("returns the spec key for each catalog-backed provider", () => {
-            for (const id of CATALOG_BACKED) {
-                expect(getModelsDevProviderKey(id)).toBe(EXPECTED_KEYS[id]);
-            }
-        });
+        for (const [providerId, expectedKey] of expectedModelsDevKeys) {
+            expect(getModelsDevProviderKey(providerId)).toBe(expectedKey);
+            expect(isCatalogBackedProvider(providerId)).toBeTrue();
+        }
 
-        test("returns undefined for passthrough providers", () => {
-            expect(getModelsDevProviderKey("custom")).toBeUndefined();
-        });
-    });
-
-    describe("isCatalogBackedProvider", () => {
-        test("returns true for the 5 catalog-backed providers", () => {
-            for (const id of CATALOG_BACKED) {
-                expect(isCatalogBackedProvider(id)).toBe(true);
-            }
-        });
-
-        test("returns false for passthrough providers", () => {
-            for (const id of PASSTHROUGH) {
-                expect(isCatalogBackedProvider(id)).toBe(false);
-            }
-        });
+        expect(getModelsDevProviderKey("custom")).toBeUndefined();
+        expect(isCatalogBackedProvider("custom")).toBeFalse();
     });
 });

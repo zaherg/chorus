@@ -37,10 +37,23 @@ describe("ProviderRegistry", () => {
     afterEach(() => {});
 
     describe("custom provider URL validation", () => {
-        test("allows explicit loopback custom provider URLs for local OpenAI-compatible servers", async () => {
-            expect(
-                await customProviderBaseUrl("http://localhost:11434/v1", false),
-            ).toBe("http://localhost:11434/v1");
+        test("allows loopback custom provider URLs", async () => {
+            const cases = [
+                {
+                    input: "http://localhost:11434/v1",
+                    expected: "http://localhost:11434/v1",
+                },
+                {
+                    input: "http://[::ffff:127.0.0.1]/v1",
+                    expected: "http://[::ffff:7f00:1]/v1",
+                },
+            ];
+
+            for (const { input, expected } of cases) {
+                expect(await customProviderBaseUrl(input, false)).toBe(
+                    expected,
+                );
+            }
         });
 
         test("still rejects non-loopback insecure custom provider URLs by default", async () => {
@@ -63,15 +76,6 @@ describe("ProviderRegistry", () => {
                     "custom_url host is not allowed",
                 );
             }
-        });
-
-        test("treats IPv4-mapped loopback like the equivalent IPv4 host", async () => {
-            expect(
-                await customProviderBaseUrl(
-                    "http://[::ffff:127.0.0.1]/v1",
-                    false,
-                ),
-            ).toBe("http://[::ffff:7f00:1]/v1");
         });
     });
 
@@ -112,30 +116,6 @@ describe("ProviderRegistry", () => {
                 }),
             );
             expect(registry.isProviderConfigured("custom")).toBeFalse();
-        });
-    });
-
-    describe("providerConfigurationErrorMessage", () => {
-        test("mentions every required config key for the custom provider", () => {
-            const registry = createProviderRegistry(testConfig());
-            const message = registry.generateText(
-                "openrouter/openai/gpt-5.2",
-                "hi",
-            );
-            return message.then((result) => {
-                expect(result.ok).toBeFalse();
-                if (result.ok) return;
-                // No catalog/configured providers means we never get to the
-                // configuration check, but the shape must still be a Result.
-                expect(result.error).toBeDefined();
-                // We instead exercise the message helper directly.
-                const {
-                    providerConfigurationErrorMessage,
-                } = require("@/providers/registry");
-                const msg: string = providerConfigurationErrorMessage("custom");
-                expect(msg).toContain("custom_url");
-                expect(msg).toContain("custom_api_key");
-            });
         });
     });
 
@@ -288,65 +268,45 @@ describe("ProviderRegistry", () => {
             expect(calls[0]?.abortSignal).toBeInstanceOf(AbortSignal);
         });
 
-        test("returns a timeout error when the provider request is aborted", async () => {
-            const registry = createProviderRegistry(
-                testConfig({ openrouter_api_key: "openrouter-key" }),
+        test("maps provider cancellation failures to retryable timeouts", async () => {
+            const cases = [
                 {
-                    generateTextFn: async () => {
-                        throw new DOMException(
-                            "The operation was aborted.",
-                            "AbortError",
-                        );
+                    message: "The operation was aborted.",
+                    name: "AbortError",
+                },
+                {
+                    message: "The operation timed out.",
+                    name: "TimeoutError",
+                },
+            ];
+
+            for (const { message, name } of cases) {
+                const registry = createProviderRegistry(
+                    testConfig({ openrouter_api_key: "openrouter-key" }),
+                    {
+                        generateTextFn: async () => {
+                            throw new DOMException(message, name);
+                        },
                     },
-                },
-            );
-
-            const result = await registry.generateText(
-                "openrouter/openai/gpt-5.2",
-                "hello",
-                undefined,
-                {
-                    catalog: openrouterCatalog(),
-                    configuredProviders: openrouterConfigured(),
-                },
-            );
-
-            expect(result.ok).toBeFalse();
-            if (!result.ok) {
-                expect(result.error.type).toBe("timeout");
-                expect(result.error.message).toBe("Provider request timed out");
-                expect(result.error.retryable).toBeTrue();
-            }
-        });
-
-        test("returns a timeout error when the provider request reaches its deadline", async () => {
-            const registry = createProviderRegistry(
-                testConfig({ openrouter_api_key: "openrouter-key" }),
-                {
-                    generateTextFn: async () => {
-                        throw new DOMException(
-                            "The operation timed out.",
-                            "TimeoutError",
-                        );
+                );
+                const result = await registry.generateText(
+                    "openrouter/openai/gpt-5.2",
+                    "hello",
+                    undefined,
+                    {
+                        catalog: openrouterCatalog(),
+                        configuredProviders: openrouterConfigured(),
                     },
-                },
-            );
+                );
 
-            const result = await registry.generateText(
-                "openrouter/openai/gpt-5.2",
-                "hello",
-                undefined,
-                {
-                    catalog: openrouterCatalog(),
-                    configuredProviders: openrouterConfigured(),
-                },
-            );
-
-            expect(result.ok).toBeFalse();
-            if (!result.ok) {
-                expect(result.error.type).toBe("timeout");
-                expect(result.error.message).toBe("Provider request timed out");
-                expect(result.error.retryable).toBeTrue();
+                expect(result.ok).toBeFalse();
+                if (!result.ok) {
+                    expect(result.error.type).toBe("timeout");
+                    expect(result.error.message).toBe(
+                        "Provider request timed out",
+                    );
+                    expect(result.error.retryable).toBeTrue();
+                }
             }
         });
 

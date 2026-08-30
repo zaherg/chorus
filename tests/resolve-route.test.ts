@@ -165,16 +165,33 @@ describe("resolve-route", () => {
             expect(result.value.display_name).toBe("GPT-5.2");
         });
 
-        test("exact route_id with provider not configured returns model_not_found", async () => {
-            const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["anthropic"]);
-            const result = await resolveRoute(classifyInput("azure/gpt-5.2"), {
-                catalog,
-                configuredProviders: configured,
-            });
-            const error = expectNotFound(result);
-            expect(error.message.toLowerCase()).toContain("azure");
-            expect(error.message.toLowerCase()).toContain("not configured");
+        test("exact route_id for an unconfigured provider returns model_not_found", async () => {
+            const cases: ReadonlyArray<{
+                input: string;
+                configured: readonly ProviderId[];
+                provider: ProviderId;
+            }> = [
+                {
+                    input: "azure/gpt-5.2",
+                    configured: ["anthropic"],
+                    provider: "azure",
+                },
+                {
+                    input: "custom/local-model",
+                    configured: ["azure"],
+                    provider: "custom",
+                },
+            ];
+
+            for (const { input, configured, provider } of cases) {
+                const result = await resolveRoute(classifyInput(input), {
+                    catalog: buildFixture(),
+                    configuredProviders: new Set(configured),
+                });
+                const error = expectNotFound(result);
+                expect(error.message.toLowerCase()).toContain(provider);
+                expect(error.message.toLowerCase()).toContain("not configured");
+            }
         });
 
         test("exact route_id for a configured passthrough provider returns a synthetic row", async () => {
@@ -192,18 +209,6 @@ describe("resolve-route", () => {
             expect(result.value.provider).toBe("custom");
             expect(result.value.provider_model_id).toBe("local-model");
             expect(result.value.display_name).toBe("local-model");
-        });
-
-        test("exact route_id for a passthrough provider that is not configured returns model_not_found", async () => {
-            const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["azure"]);
-            const result = await resolveRoute(
-                classifyInput("custom/local-model"),
-                { catalog, configuredProviders: configured },
-            );
-            const error = expectNotFound(result);
-            expect(error.message.toLowerCase()).toContain("custom");
-            expect(error.message.toLowerCase()).toContain("not configured");
         });
 
         test("exact route_id for a model that does not exist in the catalog returns model_not_found (no passthrough fallback)", async () => {
@@ -261,26 +266,15 @@ describe("resolve-route", () => {
             expect(error.input).toBe("nonexistent-model");
         });
 
-        test("removed provider route id returns model_not_found with a generic parse message", async () => {
-            const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["azure"]);
-            const result = await resolveRoute(classifyInput("openai/gpt-5.2"), {
-                catalog,
-                configuredProviders: configured,
-            });
-            const error = expectNotFound(result);
-            expect(error.message).toContain("provider/model");
-        });
-
-        test("malformed provider prefix returns the same generic failure class", async () => {
-            const catalog = buildFixture();
-            const configured = new Set<ProviderId>(["azure"]);
-            const result = await resolveRoute(
-                classifyInput("not-a-provider/model"),
-                { catalog, configuredProviders: configured },
-            );
-            const error = expectNotFound(result);
-            expect(error.message).toContain("provider/model");
+        test("unknown route prefixes return the generic parse failure", async () => {
+            for (const input of ["openai/gpt-5.2", "not-a-provider/model"]) {
+                const result = await resolveRoute(classifyInput(input), {
+                    catalog: buildFixture(),
+                    configuredProviders: new Set<ProviderId>(["azure"]),
+                });
+                const error = expectNotFound(result);
+                expect(error.message).toContain("provider/model");
+            }
         });
     });
 });

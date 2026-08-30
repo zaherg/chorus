@@ -16,14 +16,23 @@ afterEach(() => {
 });
 
 describe("embedFiles", () => {
-    it("embeds a file within an allowed path (tmpdir)", async () => {
+    it("embeds a deduplicated file within an allowed path (tmpdir)", async () => {
         const filePath = resolve(tempDir, "test.txt");
         writeFileSync(filePath, "hello world");
-        const result = await embedFiles([filePath]);
+        const result = await embedFiles([filePath, filePath]);
         expect(result.embedded_files).toEqual([realpathSync(filePath)]);
         expect(result.embedded_text).toContain("hello world");
         expect(result.skipped_files).toEqual([]);
         expect(result.total_tokens).toBeGreaterThan(0);
+    });
+
+    it("returns the empty result shape for empty input", async () => {
+        expect(await embedFiles([])).toEqual({
+            embedded_files: [],
+            embedded_text: "",
+            skipped_files: [],
+            total_tokens: 0,
+        });
     });
 
     it("skips non-existent files", async () => {
@@ -36,19 +45,5 @@ describe("embedFiles", () => {
         const result = await embedFiles(["/etc/passwd"]);
         expect(result.embedded_files).toEqual([]);
         expect(result.skipped_files.length).toBeGreaterThan(0);
-    });
-
-    it("deduplicates paths", async () => {
-        const filePath = resolve(tempDir, "dup.txt");
-        writeFileSync(filePath, "dup content");
-        const result = await embedFiles([filePath, filePath]);
-        expect(result.embedded_files).toEqual([realpathSync(filePath)]);
-    });
-
-    it("returns empty result for empty input", async () => {
-        const result = await embedFiles([]);
-        expect(result.embedded_files).toEqual([]);
-        expect(result.embedded_text).toBe("");
-        expect(result.total_tokens).toBe(0);
     });
 });

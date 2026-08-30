@@ -229,32 +229,33 @@ describe("runConsensusCommand", () => {
         expect(payload.embeddedFiles.total_tokens).toBe(0);
     });
 
-    it("returns 2 for invalid --stdin-json", async () => {
+    it("returns 2 for malformed or undersized --stdin-json", async () => {
         const cases = [
-            "not valid json {",
-            JSON.stringify({ models: [], prompt: "test" }),
+            { input: "not valid json {", expectedStderr: null },
+            {
+                input: JSON.stringify({ models: [], prompt: "test" }),
+                expectedStderr: null,
+            },
+            {
+                input: JSON.stringify({
+                    models: ["openrouter/openai/gpt-5.2"],
+                    prompt: "test",
+                }),
+                expectedStderr: "at least two models",
+            },
         ];
-        for (const input of cases) {
+
+        for (const { input, expectedStderr } of cases) {
             stubDefaults();
-            const { result } = await mockStdin(
+            const { result, stderr } = await mockStdin(
                 () => runConsensusCommand(["--stdin-json"]),
                 input,
             );
             expect(result).toBe(2);
+            if (expectedStderr) {
+                expect(stderr).toContain(expectedStderr);
+            }
         }
-    });
-
-    it("returns 2 when --stdin-json contains fewer than two models", async () => {
-        stubDefaults();
-        const { result, stderr } = await mockStdin(
-            () => runConsensusCommand(["--stdin-json"]),
-            JSON.stringify({
-                models: ["openrouter/openai/gpt-5.2"],
-                prompt: "test",
-            }),
-        );
-        expect(result).toBe(2);
-        expect(stderr).toContain("at least two models");
     });
 
     it("returns 3 and prints cli.consensus.error/1 for ambiguous model", async () => {

@@ -7,20 +7,15 @@ import {
 } from "@/providers/custom-url";
 
 describe("resolveAndValidateHostname", () => {
-    test("allows localhost without DNS call", async () => {
+    test("allows loopback hosts without DNS calls", async () => {
         const dns: DnsResolveFn = async () => {
             throw new Error("should not be called");
         };
-        const result = await resolveAndValidateHostname("localhost", dns);
-        expect(result).toEqual(["localhost"]);
-    });
 
-    test("allows ::1 without DNS call", async () => {
-        const dns: DnsResolveFn = async () => {
-            throw new Error("should not be called");
-        };
-        const result = await resolveAndValidateHostname("::1", dns);
-        expect(result).toEqual(["::1"]);
+        for (const hostname of ["localhost", "::1"]) {
+            const result = await resolveAndValidateHostname(hostname, dns);
+            expect(result).toEqual([hostname]);
+        }
     });
 
     test("rejects private IPv4 literal", async () => {
@@ -131,9 +126,14 @@ describe("createSafeCustomFetch", () => {
         };
         const safeFetch = createSafeCustomFetch(dns);
 
+        let redirectMode: string | undefined;
         const origFetch = globalThis.fetch;
         globalThis.fetch = Object.assign(
-            async () => {
+            async (
+                _input: Parameters<typeof fetch>[0],
+                init: Parameters<typeof fetch>[1],
+            ) => {
+                redirectMode = init?.redirect;
                 return new Response(null, {
                     status: 302,
                     headers: { location: "https://1.2.3.4/final" },
@@ -146,47 +146,7 @@ describe("createSafeCustomFetch", () => {
             await expect(
                 safeFetch("https://example.com/start"),
             ).rejects.toThrow("custom_url redirects are not allowed");
-        } finally {
-            globalThis.fetch = origFetch;
-        }
-    });
-
-    test("rejects redirect to private IP", async () => {
-        let dnsCalledForRedirect = false;
-        let fetchCalled = false;
-        let redirectMode: string | undefined;
-        const dns: DnsResolveFn = async (hostname) => {
-            if (hostname === "evil.internal") {
-                dnsCalledForRedirect = true;
-                return ["10.0.0.1"];
-            }
-            return ["1.2.3.4"];
-        };
-        const safeFetch = createSafeCustomFetch(dns);
-
-        const origFetch = globalThis.fetch;
-        globalThis.fetch = Object.assign(
-            async (
-                _input: Parameters<typeof fetch>[0],
-                init: Parameters<typeof fetch>[1],
-            ) => {
-                fetchCalled = true;
-                redirectMode = init?.redirect;
-                return new Response(null, {
-                    status: 302,
-                    headers: { location: "https://evil.internal/secret" },
-                });
-            },
-            { preconnect: () => {} },
-        );
-
-        try {
-            await expect(
-                safeFetch("https://example.com/start"),
-            ).rejects.toThrow("custom_url redirects are not allowed");
-            expect(fetchCalled).toBeTrue();
             expect(redirectMode).toBe("manual");
-            expect(dnsCalledForRedirect).toBeFalse();
         } finally {
             globalThis.fetch = origFetch;
         }

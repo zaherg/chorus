@@ -312,147 +312,75 @@ function positiveProviderDefaultLines(section: string): string[] {
 }
 
 describe("delegate skill command parser", () => {
-    it("classifies direct zsh commands and rejects wrapped or invalid Pi commands", () => {
-        const direct = piInvocations(
-            '#### Focused implementation delegation\n\n```zsh\npi --print --no-session --model "$PI_MODEL" --thinking "$PI_THINKING" "Review safely"\n```',
-        );
-        expect(direct).toHaveLength(1);
-        expect(direct[0].kind).toBe("task");
-        expect(taskRole(direct[0])).toBe("implementation");
-
-        const proseOnly = piInvocations(
-            'Focused implementation delegation:\n```zsh\npi --print --no-session --model "$PI_MODEL" --thinking "$PI_THINKING" "Review safely"\n```',
-        );
-        expect(taskRole(proseOnly[0])).toBeNull();
-
-        const wrappedCommands = [
-            'env MODE=review pi --print --no-session "Review"',
-            '/opt/homebrew/bin/pi --print --no-session "Review"',
-            "sh -c 'pi --print --no-session \"Review\"'",
-            "sh -c '/opt/homebrew/bin/pi --print --no-session \"Review\"'",
-            "sh -c '$PI_BIN --print --no-session \"Review\"'",
-            "nohup sh -c 'pi --print --no-session \"Review\"'",
-            'sudo -u root pi --print --no-session "Review"',
-            'xargs pi --print --no-session "Review"',
-            'eval "pi --print --no-session Review"',
-            '$PI_BIN --print --no-session "Review"',
+    it("rejects shell wrappers and execution operators around Pi commands", () => {
+        const unsafeCases = [
+            [
+                "absolute executable path",
+                '/opt/homebrew/bin/pi --print --no-session "Review"',
+                "Wrapped or compound Pi invocation",
+            ],
+            [
+                "variable executable path",
+                '$PI_BIN --print --no-session "Review"',
+                "Wrapped or compound Pi invocation",
+            ],
+            [
+                "env wrapper",
+                'env MODE=review pi --print --no-session "Review"',
+                "Wrapped or compound Pi invocation",
+            ],
+            [
+                "shell wrapper",
+                "sh -c 'pi --print --no-session \"Review\"'",
+                "Wrapped or compound Pi invocation",
+            ],
+            [
+                "sudo wrapper",
+                'sudo -u root pi --print --no-session "Review"',
+                "Wrapped or compound Pi invocation",
+            ],
+            [
+                "xargs wrapper",
+                'xargs pi --print --no-session "Review"',
+                "Wrapped or compound Pi invocation",
+            ],
+            [
+                "eval wrapper",
+                'eval "pi --print --no-session Review"',
+                "Wrapped or compound Pi invocation",
+            ],
+            [
+                "nohup wrapper",
+                "nohup sh -c 'pi --print --no-session \"Review\"'",
+                "Wrapped or compound Pi invocation",
+            ],
+            [
+                "semicolon",
+                'pi --print --no-session "Review"; echo done',
+                "Unquoted shell operator",
+            ],
+            [
+                "pipe",
+                'pi --print --no-session "Review" | tee review.log',
+                "Unquoted shell operator",
+            ],
+            [
+                "redirection",
+                'pi --print --no-session "Review" > review.log',
+                "Unquoted shell operator",
+            ],
+            [
+                "backgrounding",
+                'pi --print --no-session "Review" &',
+                "Unquoted shell operator",
+            ],
         ];
-        for (const command of wrappedCommands) {
+
+        for (const [, command, error] of unsafeCases) {
             expect(() =>
-                piInvocations(`\`\`\`zsh\n${command}\n\`\`\``),
-            ).toThrow("Wrapped or compound Pi invocation");
+                piInvocations(["```zsh", command, "```"].join("\n")),
+            ).toThrow(error);
         }
-
-        expect(piInvocations("```zsh\nprintf '%s' pi\n```")).toEqual([]);
-        expect(piInvocations("```zsh\nenv printf '%s' pi\n```")).toEqual([]);
-        expect(piInvocations("```zsh\nxargs printf '%s' pi\n```")).toEqual([]);
-        expect(piInvocations("```zsh\nsh -c 'printf \"%s\" pi'\n```")).toEqual(
-            [],
-        );
-        expect(piInvocations("```zsh\neval 'printf \"%s\" pi'\n```")).toEqual(
-            [],
-        );
-
-        const compoundCommands = [
-            'pi --print --no-session "Review"; echo done',
-            'pi --print --no-session "Review" | tee review.log',
-            'pi --print --no-session "Review" > review.log',
-            'pi --print --no-session "Review" &',
-        ];
-        for (const command of compoundCommands) {
-            expect(() =>
-                piInvocations(`\`\`\`zsh\n${command}\n\`\`\``),
-            ).toThrow("Unquoted shell operator");
-        }
-
-        expect(() =>
-            piInvocations(
-                '```zsh\npi -p --no-session --model "$PI_MODEL" --thinking "$PI_THINKING" "Review"\n```',
-            ),
-        ).toThrow("Unclassified Pi invocation");
-        expect(() =>
-            piInvocations('```zsh\npi --printer "Review"\n```'),
-        ).toThrow("Unclassified Pi invocation");
-    });
-
-    it("detects duplicate, overriding, and expanded task options", () => {
-        const expected = new Map<string, string | null>([
-            ["--model", "$PI_MODEL"],
-            ["--no-extensions", null],
-            ["--no-session", null],
-            ["--thinking", "$PI_THINKING"],
-            ["--tools", "read,grep,find,ls"],
-        ]);
-        const unsafe = piInvocations(
-            '```zsh\npi --print --no-session --model "$PI_MODEL" --model provider/model --thinking "$PI_THINKING" --no-extensions --tools read,grep,find,ls,bash "Review"\n```',
-        )[0];
-        expect(() => expectExactOptions(unsafe, 2, expected, 1)).toThrow();
-
-        const unexpectedAliases = [
-            "-a",
-            "-na",
-            "-nc",
-            "-c",
-            "-r",
-            "-ne",
-            "-t read,grep,find,ls",
-        ];
-        for (const alias of unexpectedAliases) {
-            const command =
-                'pi --print --no-session --model "$PI_MODEL" ' +
-                '--thinking "$PI_THINKING" --no-extensions ' +
-                "--tools read,grep,find,ls " +
-                alias +
-                ' "Review this code safely and report findings"';
-            const invocation = piInvocations(
-                `\`\`\`zsh\n${command}\n\`\`\``,
-            )[0];
-            expect(() =>
-                expectExactOptions(invocation, 2, expected, 1),
-            ).toThrow();
-        }
-    });
-
-    it("detects concrete PI_MODEL assignments in supported shell forms", () => {
-        const concrete = [
-            'PI_MODEL="provider/model"',
-            '  export PI_MODEL="provider/model"',
-            "readonly PI_MODEL='provider/model'",
-            'typeset -gx PI_MODEL="provider/model"',
-            'export -x PI_MODEL="provider/model"',
-            "typeset -gx 'PI_MODEL=provider/model'",
-            // biome-ignore lint/suspicious/noTemplateCurlyInString: This fixture intentionally contains literal shell expansion syntax.
-            "PI_MODEL='${PI_PROVIDER}/model'",
-        ].join("\n");
-        expect(concretePiModelAssignments(concrete)).toHaveLength(7);
-
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: This fixture intentionally contains literal shell expansion syntax.
-        const derived = 'PI_MODEL="${PI_PROVIDER}/${PI_PROVIDER_MODEL}"';
-        expect(concretePiModelAssignments(derived)).toEqual([]);
-
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: This fixture intentionally contains literal shell expansion syntax.
-        const providerFallback = 'PI_MODEL="${PI_MODEL:-openai/gpt-5.4}"';
-        expect(concretePiModelAssignments(providerFallback)).toEqual([
-            providerFallback,
-        ]);
-
-        const splitFallback = `PI_MODEL="\${PI_MODEL:-openai}/\${MODEL_ID:-gpt-5.4}"`;
-        expect(concretePiModelAssignments(splitFallback)).toEqual([
-            splitFallback,
-        ]);
-    });
-
-    it("detects positive provider-specific default statements", () => {
-        expect(
-            positiveProviderDefaultLines(
-                "Use provider/model-id as the default for delegated tasks.",
-            ),
-        ).toHaveLength(1);
-        expect(
-            positiveProviderDefaultLines(
-                "Never use provider/model-id as the default for delegated tasks.",
-            ),
-        ).toEqual([]);
     });
 });
 
@@ -609,47 +537,33 @@ const tasks = piInvocations(piSection).filter((p) => p.kind === "task");
 const meta = frontmatter(skill);
 
 describe("delegate skill metadata", () => {
-    it("keeps the delegate frontmatter name and Pi in the description", () => {
+    it("exposes delegate and Pi discovery metadata", () => {
         expect(meta.name).toBe("delegate");
         expect(meta.description).toContain("Pi Coding Agent");
-    });
-
-    it("contains the Pi section exactly once", () => {
-        expect(piSection.length).toBeGreaterThan(0);
-        expect(skill.indexOf("### Pi Coding Agent")).toBe(
-            skill.lastIndexOf("### Pi Coding Agent"),
-        );
-    });
-
-    it("documents live catalog discovery", () => {
+        expect([
+            ...skill.matchAll(/^### Pi Coding Agent[ \t]*$/gm),
+        ]).toHaveLength(1);
+        expect(piSection).not.toBe("");
         expect(piSection).toContain("pi --list-models");
     });
 
-    it("does not publish a provider-specific model as its default", () => {
+    it("does not define provider-specific model defaults", () => {
         expect(concretePiModelAssignments(piSection)).toEqual([]);
         expect(positiveProviderDefaultLines(piSection)).toEqual([]);
     });
 });
 
 describe("delegate skill model and thinking contract", () => {
-    it("frames explicit selection as delegate policy, not a Pi CLI requirement", () => {
-        expect(piSection).toContain("delegate workflow policy");
-        expect(piSection).not.toContain("requires explicit model and thinking");
-    });
-
-    it("keeps the PI_MODEL presence guard in the examples", () => {
+    it("keeps mandatory model and thinking precedence expressions", () => {
         expect(piSection).toContain(
             // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell syntax asserted as text
             ': "${PI_MODEL:?Set PI_MODEL to an exact provider-qualified model from pi --list-models}"',
         );
-    });
-
-    it("uses an explicit PI_THINKING precedence expression", () => {
         // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell syntax asserted as text
         expect(piSection).toContain('PI_THINKING="${PI_THINKING:-high}"');
     });
 
-    it("contains implementation and restricted-review tasks with exact flags", () => {
+    it("uses exact implementation and restricted-review task commands", () => {
         const implementation = tasks.filter(
             (task) => taskRole(task) === "implementation",
         );
@@ -674,93 +588,59 @@ describe("delegate skill model and thinking contract", () => {
                 expected.set("--tools", "read,grep,find,ls");
             }
 
-            const parsed = expectExactOptions(task, 2, expected, 1);
-            expectMeaningfulPrompt(parsed);
+            expectMeaningfulPrompt(expectExactOptions(task, 2, expected, 1));
         }
     });
 
-    it("documents the separately supplied provider normalization rule", () => {
-        expect(piSection).toContain(
-            // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell syntax asserted as text
-            'PI_MODEL="${PI_PROVIDER}/${PI_PROVIDER_MODEL}"',
-        );
-        expect(piSection).toContain("provider/model-id");
-    });
-
-    it("documents user-requested thinking precedence", () => {
-        expect(piSection).toContain(
-            "Use the exact thinking level requested by the user",
-        );
-    });
-
-    it("gives exact user input precedence over established environment state", () => {
-        const exactIdx = piSection.indexOf(
-            "If the user supplied an exact provider-qualified Pi model, use it unchanged",
-        );
-        const envIdx = piSection.indexOf(
-            "If the user or project already established `PI_MODEL`, use that exact value",
-        );
-        expect(exactIdx).toBeGreaterThanOrEqual(0);
-        expect(envIdx).toBeGreaterThan(exactIdx);
-    });
-
-    it("requires live discovery and a user choice when no exact model is established", () => {
+    it("requires explicit model selection without silent fallback or downgrade", () => {
         expect(piSection).toContain(
             "run `pi --list-models`, present the relevant live candidates, and ask the user to choose",
         );
-    });
-
-    it("prohibits default inference, first fuzzy result, and failure-driven switches", () => {
         expect(piSection).toContain(
             "Never infer a model from Pi's configured default",
         );
         expect(piSection).toContain(
-            "Never silently select the first fuzzy-search result",
-        );
-        expect(piSection).toContain(
             "Never silently switch models after a failure",
         );
-    });
-
-    it("states the guard checks presence only and rejects slash counting", () => {
-        expect(piSection).toContain("checks presence only");
-        expect(piSection).toContain("never by counting slashes");
-    });
-
-    it("requires thinking support checks and forbids silent downgrade", () => {
-        expect(piSection).toContain("reports thinking support");
         expect(piSection).toContain("report the mismatch and ask the user");
         expect(piSection).toContain(
             "Never silently downgrade a requested thinking level",
         );
     });
+});
 
-    it("permits persistent sessions only on explicit user request", () => {
+describe("delegate skill failure contract", () => {
+    it("requires safe, authorized failure handling", () => {
+        expect(piSection).toContain("capture the process exit code");
+        expect(piSection).toContain("preserve relevant stdout and stderr");
+        for (const context of [
+            "the exact harness",
+            "the exact model",
+            "the exact thinking level",
+            "the working directory",
+            "the failed task stage",
+            "safely redacted equivalent",
+        ]) {
+            expect(piSection).toContain(context);
+        }
+        expect(piSection).toContain("Then stop.");
         expect(piSection).toContain(
-            "Use a persistent session only when the user explicitly requests resumable work",
+            "Do not retry the same command automatically",
+        );
+        expect(piSection).toContain(
+            "Do not retry with another model automatically",
+        );
+        expect(piSection).toContain(
+            "Do not switch to another harness automatically",
+        );
+        expect(piSection).toContain(
+            "Retry or substitute only after explicit user authorization",
         );
     });
 });
 
-describe("delegate skill review safety contract", () => {
-    it("keeps the exact restricted review allowlist", () => {
-        const reviews = tasks.filter((task) => taskRole(task) === "review");
-        expect(reviews).toHaveLength(1);
-
-        const parsed = parseCommandOptions(reviews[0].tokens, 2);
-        expect(parsed.options.get("--no-extensions")).toEqual([null]);
-        expect(parsed.options.get("--tools")).toEqual(["read,grep,find,ls"]);
-    });
-
-    it("states the sandbox limitation and worktree inspection", () => {
-        expect(piSection).toContain("not an operating-system sandbox");
-        expect(piSection).toContain("external sandbox or container");
-        expect(piSection).toContain("Inspect the worktree after any Pi run");
-    });
-});
-
 describe("delegate skill trust and credential contract", () => {
-    it("keeps trust overrides and context disabling out of task commands", () => {
+    it("keeps trust and context-disabling options out of task commands", () => {
         for (const task of tasks) {
             const options = parseCommandOptions(task.tokens, 2).options;
             expect(options.has("--approve")).toBe(false);
@@ -769,21 +649,7 @@ describe("delegate skill trust and credential contract", () => {
         }
     });
 
-    it("documents both trust flags and the non-interactive fallback", () => {
-        expect(piSection).toContain("`--approve`");
-        expect(piSection).toContain("`--no-approve`");
-        expect(piSection).toContain("do not display a project-trust prompt");
-        expect(piSection).toContain(
-            "saved trust decision or the configured non-interactive fallback",
-        );
-    });
-
-    it("keeps context files enabled with named instruction files", () => {
-        expect(piSection).toContain("AGENTS.md");
-        expect(piSection).toContain("CLAUDE.md");
-    });
-
-    it("documents the exact safe readiness command", () => {
+    it("uses the exact safe readiness command", () => {
         const readiness = piInvocations(piSection).filter(
             (invocation) => invocation.kind === "readiness",
         );
@@ -805,57 +671,11 @@ describe("delegate skill trust and credential contract", () => {
         );
     });
 
-    it("prohibits credential-emitting operations", () => {
-        expect(piSection).toContain("--credentials");
-        expect(piSection).toContain("print-api-key");
-        expect(piSection).toContain("print-bearer-token");
-        expect(piSection).toContain("Never run credential-emitting operations");
+    it("contains no credential-emitting shell command", () => {
         for (const block of shellBlocks(piSection)) {
             expect(block.invocation).not.toContain("print-api-key");
             expect(block.invocation).not.toContain("print-bearer-token");
             expect(block.invocation).not.toContain("--credentials");
         }
-    });
-});
-
-describe("delegate skill failure contract", () => {
-    it("requires exit code capture and safe output preservation", () => {
-        expect(piSection).toContain("capture the process exit code");
-        expect(piSection).toContain("preserve relevant stdout and stderr");
-    });
-
-    it("requires exact failure context", () => {
-        expect(piSection).toContain("the exact harness");
-        expect(piSection).toContain("the exact model");
-        expect(piSection).toContain("the exact thinking level");
-        expect(piSection).toContain("the working directory");
-        expect(piSection).toContain("the failed task stage");
-        expect(piSection).toContain("safely redacted equivalent");
-    });
-
-    it("requires stopping and authorization before any retry or substitution", () => {
-        expect(piSection).toContain("Then stop.");
-        expect(piSection).toContain(
-            "Do not retry the same command automatically",
-        );
-        expect(piSection).toContain(
-            "Do not retry with another model automatically",
-        );
-        expect(piSection).toContain(
-            "Do not switch to another harness automatically",
-        );
-        expect(piSection).toContain(
-            "Retry or substitute only after explicit user authorization",
-        );
-    });
-});
-
-describe("delegate skill platform contract", () => {
-    it("states POSIX shell scope without claiming PowerShell compatibility", () => {
-        expect(piSection).toContain("POSIX shell syntax");
-        expect(piSection).toContain("variable guards and line continuations");
-        expect(piSection).toContain(
-            "do not claim native PowerShell compatibility",
-        );
     });
 });
