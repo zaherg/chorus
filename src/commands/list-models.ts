@@ -14,11 +14,18 @@ import { configureLogging } from "@/utils/logger";
 const parseFlags = (
     rawArgs: string[],
 ):
-    | { ok: true; refresh: boolean; json: boolean; help: boolean }
+    | {
+          ok: true;
+          refresh: boolean;
+          json: boolean;
+          help: boolean;
+          filter: string | undefined;
+      }
     | { ok: false; flag: string } => {
     let refresh = false;
     let json = false;
     let help = false;
+    let filter: string | undefined;
     let sawSeparator = false;
     for (const arg of rawArgs) {
         if (sawSeparator) {
@@ -43,14 +50,23 @@ const parseFlags = (
         if (arg.startsWith("-")) {
             return { ok: false, flag: arg };
         }
+        if (filter !== undefined) {
+            return { ok: false, flag: arg };
+        }
+        filter = arg;
     }
-    return { ok: true, refresh, json, help };
+    return { ok: true, refresh, json, help, filter };
 };
 
 const HELP_TEXT = `consensus list-models -- list model IDs available from configured providers
 
 USAGE:
-  consensus list-models [--json] [--refresh] [--help]
+  consensus list-models [filter] [--json] [--refresh] [--help]
+
+ARGUMENTS:
+  filter         Optional case-insensitive substring; keep only models whose
+                 route_id, display_name, provider_model_id, or canonical_model_id
+                 contains it (e.g. "kimi").
 
 FLAGS:
   --json         Emit a "models.list/1" JSON payload to stdout
@@ -125,6 +141,47 @@ const filterConfiguredProviders = (
     };
 };
 
+const modelMatchesFilter = (
+    model: BrokerModelInfo,
+    needle: string,
+): boolean => {
+    if (model.route_id.toLowerCase().includes(needle)) {
+        return true;
+    }
+    if (model.display_name.toLowerCase().includes(needle)) {
+        return true;
+    }
+    if (model.provider_model_id.toLowerCase().includes(needle)) {
+        return true;
+    }
+    if (model.canonical_model_id?.toLowerCase().includes(needle)) {
+        return true;
+    }
+    return false;
+};
+
+const applyModelFilter = (
+    response: ModelsListResponse,
+    filter: string | undefined,
+): ModelsListResponse => {
+    if (filter === undefined) {
+        return response;
+    }
+    const needle = filter.toLowerCase();
+    const providers = Object.fromEntries(
+        Object.entries(response.providers).map(([id, entry]) => [
+            id,
+            {
+                ...entry,
+                models: entry.models.filter((m) =>
+                    modelMatchesFilter(m, needle),
+                ),
+            },
+        ]),
+    ) as Record<ProviderId, ProviderListEntry>;
+    return { ...response, providers };
+};
+
 export const runListModelsCommand = async (args: string[]): Promise<number> => {
     const parsed = parseFlags(args);
     if (!parsed.ok) {
@@ -175,13 +232,16 @@ export const runListModelsCommand = async (args: string[]): Promise<number> => {
         return 1;
     }
 
-    const filtered = filterConfiguredProviders(
-        {
-            schema: result.schema,
-            cache: result.cache,
-            providers: result.providers,
-        },
-        config,
+    const filtered = applyModelFilter(
+        filterConfiguredProviders(
+            {
+                schema: result.schema,
+                cache: result.cache,
+                providers: result.providers,
+            },
+            config,
+        ),
+        parsed.filter,
     );
 
     if (parsed.json) {

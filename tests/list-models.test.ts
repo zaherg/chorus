@@ -247,4 +247,81 @@ describe("runListModelsCommand", () => {
         expect(stderr).toContain("Error");
         expect(stderr).toContain("no cache and network failed");
     });
+
+    it("filters models by case-insensitive substring against route_id and display_name", async () => {
+        stubLoadCatalog(buildResponse(fixtureProviders()));
+        stubConfiguredProviders(["anthropic", "openrouter"]);
+
+        const { result, stdout } = await captureOutput(() =>
+            runListModelsCommand(["--json", "Kimi"]),
+        );
+        expect(result).toBe(0);
+
+        const payload = JSON.parse(stdout);
+        expect(payload.providers.anthropic.models).toEqual([]);
+        expect(payload.providers.openrouter.models).toEqual([]);
+    });
+
+    it("returns matching models when filter substring is present in route_id", async () => {
+        const providers = fixtureProviders();
+        const kimiModel = BrokerModelInfoSchema.parse({
+            route_id: "openrouter/moonshotai/kimi-k2",
+            provider: "openrouter",
+            provider_model_id: "moonshotai/kimi-k2",
+            display_name: "Kimi K2",
+            canonical_model_id: "kimi-k2",
+        });
+        providers.openrouter = {
+            status: "catalog",
+            models: [...providers.openrouter.models, kimiModel],
+        };
+        stubLoadCatalog(buildResponse(providers));
+        stubConfiguredProviders(["openrouter", "anthropic"]);
+
+        const { result, stdout } = await captureOutput(() =>
+            runListModelsCommand(["--json", "kimi"]),
+        );
+        expect(result).toBe(0);
+
+        const payload = JSON.parse(stdout);
+        expect(payload.providers.openrouter.models).toHaveLength(1);
+        expect(payload.providers.openrouter.models[0].route_id).toBe(
+            "openrouter/moonshotai/kimi-k2",
+        );
+        expect(payload.providers.anthropic.models).toEqual([]);
+    });
+
+    it("filters human-readable output to only matching models", async () => {
+        const providers = fixtureProviders();
+        const kimiModel = BrokerModelInfoSchema.parse({
+            route_id: "openrouter/moonshotai/kimi-k2",
+            provider: "openrouter",
+            provider_model_id: "moonshotai/kimi-k2",
+            display_name: "Kimi K2",
+        });
+        providers.openrouter = {
+            status: "catalog",
+            models: [...providers.openrouter.models, kimiModel],
+        };
+        stubLoadCatalog(buildResponse(providers));
+        stubConfiguredProviders(["openrouter", "anthropic"]);
+
+        const { result, stdout } = await captureOutput(() =>
+            runListModelsCommand(["kimi"]),
+        );
+        expect(result).toBe(0);
+
+        expect(stdout).toContain("openrouter/moonshotai/kimi-k2");
+        expect(stdout).not.toContain("anthropic/claude-3-5-sonnet");
+        expect(stdout).not.toContain("openrouter/openai/gpt-5.2");
+    });
+
+    it("rejects a second positional argument with exit code 2", async () => {
+        stubConfiguredProviders([]);
+        const { result, stderr } = await captureOutput(() =>
+            runListModelsCommand(["kimi", "extra"]),
+        );
+        expect(result).toBe(2);
+        expect(stderr).toContain("Unknown flag: extra");
+    });
 });

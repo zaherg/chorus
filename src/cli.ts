@@ -65,7 +65,9 @@ CONSENSUS USAGE:
     --schema                                Print output JSON schema and exit
 
 LIST-MODELS USAGE:
-  consensus list-models [--json] [--refresh] [--help]
+  consensus list-models [filter] [--json] [--refresh] [--help]
+    [filter]       Optional case-insensitive substring over route_id,
+                   display_name, provider_model_id, canonical_model_id
     --json         Emit a "models.list/1" JSON payload to stdout
     --refresh      Force a fresh fetch from models.dev before listing
 
