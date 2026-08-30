@@ -20,12 +20,7 @@
  */
 
 import { isCatalogBackedProvider } from "@/providers/provider-map";
-import {
-    type BrokerModelInfo,
-    type ModelsListResponse,
-    type ProviderId,
-    providerIdValues,
-} from "@/types/providers";
+import { type BrokerModelInfo, type ModelsListResponse, type ProviderId, providerIdValues } from "@/types/providers";
 
 // === Input classification ===
 
@@ -127,10 +122,7 @@ export type ResolveRouteOptions = {
 
 // === Resolution ===
 
-const notConfiguredMessage = (
-    input: string,
-    provider: ProviderId,
-): ResolveRouteFailure => ({
+const notConfiguredMessage = (input: string, provider: ProviderId): ResolveRouteFailure => ({
     ok: false,
     error: {
         code: "model_not_found",
@@ -157,10 +149,7 @@ const missingProviderMessage = (input: string): ResolveRouteFailure => ({
     },
 });
 
-const ambiguousMessage = (
-    input: string,
-    candidates: string[],
-): ResolveRouteFailure => ({
+const ambiguousMessage = (input: string, candidates: string[]): ResolveRouteFailure => ({
     ok: false,
     error: {
         code: "ambiguous_model",
@@ -194,10 +183,7 @@ const unknownModelMessage = (input: string): ResolveRouteFailure => ({
  *    `provider_model_id` match. Passthrough providers are not searched
  *    (their models are not catalogued).
  */
-export const resolveRoute = (
-    input: UnresolvedRoute,
-    options: ResolveRouteOptions,
-): ResolveRouteResult => {
+export const resolveRoute = (input: UnresolvedRoute, options: ResolveRouteOptions): ResolveRouteResult => {
     const { catalog, configuredProviders } = options;
 
     if (input.kind === "exact_route_id") {
@@ -215,9 +201,7 @@ export const resolveRoute = (
             if (providerEntry?.status !== "catalog") {
                 return notInCatalogMessage(input.route_id);
             }
-            const match = providerEntry.models.find(
-                (m) => m.provider_model_id === providerModelId,
-            );
+            const match = providerEntry.models.find((m) => m.provider_model_id === providerModelId);
             if (match === undefined) {
                 return notInCatalogMessage(input.route_id);
             }
@@ -260,8 +244,6 @@ export const resolveRoute = (
     if (matches.length === 1) {
         return { ok: true, value: matches[0] };
     }
-    const candidates = matches
-        .map((m) => m.route_id)
-        .sort((a, b) => a.localeCompare(b));
+    const candidates = matches.map((m) => m.route_id).sort((a, b) => a.localeCompare(b));
     return ambiguousMessage(input.providerModelId, candidates);
 };
