@@ -3,31 +3,15 @@ import { anthropic, createAnthropic } from "@ai-sdk/anthropic";
 import { azure, createAzure } from "@ai-sdk/azure";
 import { createVertex, vertex } from "@ai-sdk/google-vertex";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import {
-    createOpenRouter,
-    type OpenRouterProviderOptions,
-    openrouter,
-} from "@openrouter/ai-sdk-provider";
-import {
-    generateText as aiGenerateText,
-    type JSONValue,
-    type LanguageModel,
-} from "ai";
+import { createOpenRouter, type OpenRouterProviderOptions, openrouter } from "@openrouter/ai-sdk-provider";
+import { generateText as aiGenerateText, type JSONValue, type LanguageModel } from "ai";
 
 import type { ChorusConfig } from "@/config";
 import { classifyInput, resolveRoute } from "@/providers/resolve-route";
-import type {
-    BrokerModelInfo,
-    ModelsListResponse,
-    ProviderId,
-} from "@/types/providers";
+import type { BrokerModelInfo, ModelsListResponse, ProviderId } from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
 import { estimateTokenCount } from "@/utils";
-import {
-    createSafeCustomFetch,
-    customProviderBaseUrl,
-    defaultDnsResolve,
-} from "./custom-url";
+import { createSafeCustomFetch, customProviderBaseUrl, defaultDnsResolve } from "./custom-url";
 
 type GenerateTextFn = typeof aiGenerateText;
 
@@ -65,7 +49,7 @@ export interface GenerateTextResult {
 
 const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
 
-const providerTimeoutMs = (config: ChorusConfig): number => {
+const providerTimeoutMs = (config: ChorusConfig) => {
     const raw = config.provider_timeout_ms;
     return raw > 0 ? raw : DEFAULT_PROVIDER_TIMEOUT_MS;
 };
@@ -106,46 +90,31 @@ const PROVIDER_CONFIG: Record<ProviderId, ProviderConfigEntry> = {
     },
 };
 
-const getProviderApiKey = (
-    config: ChorusConfig,
-    pid: ProviderId,
-): string | undefined => {
+const getProviderApiKey = (config: ChorusConfig, pid: ProviderId) => {
     return config[PROVIDER_CONFIG[pid].apiKey] as string | undefined;
 };
 
-const getProviderRequiredConfigKeys = (
-    providerId: ProviderId,
-): readonly (keyof ChorusConfig)[] => {
+const getProviderRequiredConfigKeys = (providerId: ProviderId) => {
     return PROVIDER_CONFIG[providerId].requiredConfig;
 };
 
-export const providerConfigurationErrorMessage = (
-    providerId: ProviderId,
-    target = "it",
-): string => {
-    return `Provider not configured: ${providerId}. Set ${getProviderRequiredConfigKeys(
-        providerId,
-    ).join(" and ")} to enable ${target}.`;
+export const providerConfigurationErrorMessage = (providerId: ProviderId, target = "it") => {
+    return `Provider not configured: ${providerId}. Set ${getProviderRequiredConfigKeys(providerId).join(
+        " and ",
+    )} to enable ${target}.`;
 };
 
-const isUnresolvedEnvVar = (value: string): boolean => {
+const isUnresolvedEnvVar = (value: string) => {
     // Catch both standalone $VAR and composite values like prefix-$VAR-suffix.
     // After resolveEnvVars in config.ts substitutes known env vars, any
     // remaining $VAR must be an unresolved placeholder.
     return /\$[A-Z_][A-Z0-9_]*/u.test(value);
 };
 
-export const isProviderConfigured = (
-    providerId: ProviderId,
-    config: ChorusConfig,
-): boolean => {
+export const isProviderConfigured = (providerId: ProviderId, config: ChorusConfig) => {
     return getProviderRequiredConfigKeys(providerId).every((key) => {
         const value = config[key];
-        return (
-            typeof value === "string" &&
-            value.length > 0 &&
-            !isUnresolvedEnvVar(value)
-        );
+        return typeof value === "string" && value.length > 0 && !isUnresolvedEnvVar(value);
     });
 };
 
@@ -193,20 +162,13 @@ export type ProviderRegistry = {
 
 export const createProviderRegistry = (
     config: ChorusConfig,
-    {
-        generateTextFn = aiGenerateText,
-        providerFactories = {},
-    }: ProviderRegistryOptions = {},
+    { generateTextFn = aiGenerateText, providerFactories = {} }: ProviderRegistryOptions = {},
 ): ProviderRegistry => {
     const providerFactoriesById = new Map<ProviderId, ProviderFactory>(
-        Object.entries(providerFactories) as Array<
-            [ProviderId, ProviderFactory]
-        >,
+        Object.entries(providerFactories) as Array<[ProviderId, ProviderFactory]>,
     );
 
-    const isProviderConfiguredForRegistry = (
-        providerId: ProviderId,
-    ): boolean => {
+    const isProviderConfiguredForRegistry = (providerId: ProviderId) => {
         return isProviderConfigured(providerId, config);
     };
 
@@ -224,8 +186,7 @@ export const createProviderRegistry = (
                     anthropic: {
                         thinking: {
                             type: "enabled",
-                            budgetTokens:
-                                ANTHROPIC_THINKING_BUDGET[thinkingMode],
+                            budgetTokens: ANTHROPIC_THINKING_BUDGET[thinkingMode],
                         },
                     },
                 };
@@ -242,9 +203,7 @@ export const createProviderRegistry = (
         }
     };
 
-    const createProviderFactory = async (
-        providerId: ProviderId,
-    ): Promise<ProviderFactory> => {
+    const createProviderFactory = async (providerId: ProviderId): Promise<ProviderFactory> => {
         const apiKey = getProviderApiKey(config, providerId);
         switch (providerId) {
             case "amazon-bedrock":
@@ -260,10 +219,7 @@ export const createProviderRegistry = (
             case "custom":
                 return createOpenAICompatible({
                     apiKey: config.custom_api_key,
-                    baseURL: await customProviderBaseUrl(
-                        config.custom_url,
-                        config.allow_insecure_custom === true,
-                    ),
+                    baseURL: await customProviderBaseUrl(config.custom_url, config.allow_insecure_custom === true),
                     fetch: createSafeCustomFetch(defaultDnsResolve),
                     name: "custom",
                 });
@@ -274,9 +230,7 @@ export const createProviderRegistry = (
         }
     };
 
-    const getProviderFactory = async (
-        providerId: ProviderId,
-    ): Promise<ProviderFactory> => {
+    const getProviderFactory = async (providerId: ProviderId): Promise<ProviderFactory> => {
         const existingProvider = providerFactoriesById.get(providerId);
 
         if (existingProvider) {
@@ -294,7 +248,7 @@ export const createProviderRegistry = (
         input: string,
         catalog: ModelsListResponse | undefined,
         configuredProviders: ReadonlySet<ProviderId> | undefined,
-    ): Promise<BrokerModelInfo | undefined> => {
+    ) => {
         if (catalog === undefined || configuredProviders === undefined) {
             // The broker is the only path that knows about the catalog and
             // the set of configured providers. The registry cannot perform
@@ -312,23 +266,11 @@ export const createProviderRegistry = (
         return result.value;
     };
 
-    const getModelInfo: ProviderRegistry["getModelInfo"] = async (
-        input,
-        options,
-    ) => {
-        return resolveToBrokerModel(
-            input,
-            options?.catalog,
-            options?.configuredProviders,
-        );
+    const getModelInfo: ProviderRegistry["getModelInfo"] = async (input, options) => {
+        return resolveToBrokerModel(input, options?.catalog, options?.configuredProviders);
     };
 
-    const generateText: ProviderRegistry["generateText"] = async (
-        input,
-        prompt,
-        systemPrompt,
-        options = {},
-    ) => {
+    const generateText: ProviderRegistry["generateText"] = async (input, prompt, systemPrompt, options = {}) => {
         const catalog = options.catalog;
         const configuredProviders = options.configuredProviders;
 
@@ -343,11 +285,7 @@ export const createProviderRegistry = (
             };
         }
 
-        const modelInfo = await resolveToBrokerModel(
-            input,
-            catalog,
-            configuredProviders,
-        );
+        const modelInfo = await resolveToBrokerModel(input, catalog, configuredProviders);
         if (!modelInfo) {
             return {
                 ok: false,
@@ -364,9 +302,7 @@ export const createProviderRegistry = (
                 ok: false,
                 error: {
                     type: "configuration",
-                    message: providerConfigurationErrorMessage(
-                        modelInfo.provider,
-                    ),
+                    message: providerConfigurationErrorMessage(modelInfo.provider),
                     retryable: false,
                 },
             };
@@ -375,17 +311,11 @@ export const createProviderRegistry = (
         try {
             const provider = await getProviderFactory(modelInfo.provider);
             const model = provider.languageModel(modelInfo.provider_model_id);
-            const providerOptions = buildProviderOptions(
-                modelInfo.provider,
-                options.thinkingMode,
-            );
+            const providerOptions = buildProviderOptions(modelInfo.provider, options.thinkingMode);
             const abortSignal = (() => {
                 const controller = new AbortController();
                 const timeoutMs = providerTimeoutMs(config);
-                const timeoutId = setTimeout(
-                    () => controller.abort(),
-                    timeoutMs,
-                );
+                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
                 const parent = options.abortSignal;
 
                 if (parent) {
@@ -413,17 +343,11 @@ export const createProviderRegistry = (
                 prompt,
                 ...(Object.keys(providerOptions).length > 0
                     ? {
-                          providerOptions: providerOptions as Record<
-                              string,
-                              Record<string, JSONValue>
-                          >,
+                          providerOptions: providerOptions as Record<string, Record<string, JSONValue>>,
                       }
                     : {}),
                 system: systemPrompt,
-                temperature:
-                    modelInfo.provider === "anthropic" && options.thinkingMode
-                        ? 0
-                        : options.temperature,
+                temperature: modelInfo.provider === "anthropic" && options.thinkingMode ? 0 : options.temperature,
             });
 
             clearTimeout(abortSignal.timeoutId);
@@ -431,15 +355,9 @@ export const createProviderRegistry = (
             // Prefer API-provided usage fields.  When the API returns only
             // totalTokens without a breakdown, set input/output to 0
             // instead of estimating, so the numbers stay consistent.
-            const hasApiTotal =
-                typeof result.usage?.totalTokens === "number" &&
-                result.usage.totalTokens > 0;
-            const inputTokens =
-                result.usage?.inputTokens ??
-                (hasApiTotal ? 0 : estimateTokenCount(prompt));
-            const outputTokens =
-                result.usage?.outputTokens ??
-                (hasApiTotal ? 0 : estimateTokenCount(result.text));
+            const hasApiTotal = typeof result.usage?.totalTokens === "number" && result.usage.totalTokens > 0;
+            const inputTokens = result.usage?.inputTokens ?? (hasApiTotal ? 0 : estimateTokenCount(prompt));
+            const outputTokens = result.usage?.outputTokens ?? (hasApiTotal ? 0 : estimateTokenCount(result.text));
 
             return {
                 ok: true,
@@ -450,24 +368,19 @@ export const createProviderRegistry = (
                     usage: {
                         input_tokens: inputTokens,
                         output_tokens: outputTokens,
-                        total_tokens:
-                            result.usage?.totalTokens ??
-                            inputTokens + outputTokens,
+                        total_tokens: result.usage?.totalTokens ?? inputTokens + outputTokens,
                     },
                 },
             };
         } catch (error: unknown) {
             const isAbortError =
-                error instanceof Error &&
-                (error.name === "AbortError" || error.name === "TimeoutError");
+                error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 
             return {
                 ok: false,
                 error: {
                     type: isAbortError ? "timeout" : "execution",
-                    message: isAbortError
-                        ? "Provider request timed out"
-                        : "Provider request failed",
+                    message: isAbortError ? "Provider request timed out" : "Provider request failed",
                     retryable: true,
                 },
             };

@@ -2,10 +2,7 @@ import { resolve4, resolve6 } from "node:dns/promises";
 
 const DEFAULT_CUSTOM_API_URL = "http://localhost:11434/v1";
 
-export const customProviderBaseUrl = async (
-    customUrl: string | undefined,
-    allowInsecure: boolean,
-): Promise<string> => {
+export const customProviderBaseUrl = async (customUrl: string | undefined, allowInsecure: boolean) => {
     if (typeof customUrl !== "string" || !customUrl) {
         return DEFAULT_CUSTOM_API_URL;
     }
@@ -13,10 +10,7 @@ export const customProviderBaseUrl = async (
     return validateCustomApiUrl(customUrl, allowInsecure);
 };
 
-const validateCustomApiUrl = async (
-    rawUrl: string,
-    allowInsecure: boolean,
-): Promise<string> => {
+const validateCustomApiUrl = async (rawUrl: string, allowInsecure: boolean) => {
     let url: URL;
 
     try {
@@ -37,14 +31,8 @@ const validateCustomApiUrl = async (
         throw new Error("custom_url must not contain a fragment");
     }
 
-    if (
-        url.protocol === "http:" &&
-        !allowInsecure &&
-        !isLoopbackHost(url.hostname)
-    ) {
-        throw new Error(
-            "custom_url must use https:// unless allow_insecure_custom is set to true",
-        );
+    if (url.protocol === "http:" && !allowInsecure && !isLoopbackHost(url.hostname)) {
+        throw new Error("custom_url must use https:// unless allow_insecure_custom is set to true");
     }
 
     if (await isBlockedHost(url.hostname)) {
@@ -54,7 +42,7 @@ const validateCustomApiUrl = async (
     return url.toString();
 };
 
-const isBlockedHost = async (hostname: string): Promise<boolean> => {
+const isBlockedHost = async (hostname: string) => {
     const normalized = normalizeHostname(hostname);
 
     if (normalized === "localhost") {
@@ -105,7 +93,7 @@ const isBlockedHost = async (hostname: string): Promise<boolean> => {
     }
 };
 
-const isLoopbackHost = (hostname: string): boolean => {
+const isLoopbackHost = (hostname: string) => {
     const normalized = normalizeHostname(hostname);
     const mappedIpv4 = parseIpv4MappedIpv6(normalized);
 
@@ -117,16 +105,14 @@ const isLoopbackHost = (hostname: string): boolean => {
     );
 };
 
-const normalizeHostname = (hostname: string): string => {
+const normalizeHostname = (hostname: string) => {
     return hostname
         .toLowerCase()
         .replace(/^\[(.*)\]$/u, "$1")
         .replace(/\.$/u, "");
 };
 
-const parseIpv4 = (
-    hostname: string,
-): [number, number, number, number] | undefined => {
+const parseIpv4 = (hostname: string): [number, number, number, number] | undefined => {
     const parts = hostname.split(".");
     if (parts.length !== 4) return undefined;
 
@@ -140,9 +126,7 @@ const parseIpv4 = (
     return octets as [number, number, number, number];
 };
 
-const parseIpv4MappedIpv6 = (
-    hostname: string,
-): [number, number, number, number] | undefined => {
+const parseIpv4MappedIpv6 = (hostname: string): [number, number, number, number] | undefined => {
     const lowered = hostname.toLowerCase();
     const prefixIdx = lowered.startsWith("::ffff:")
         ? "::ffff:".length
@@ -168,19 +152,10 @@ const parseIpv4MappedIpv6 = (
     return [high >> 8, high & 0xff, low >> 8, low & 0xff];
 };
 
-const isExactLoopbackIpv4 = ([a, b, c, d]: [
-    number,
-    number,
-    number,
-    number,
-]): boolean => a === 127 && b === 0 && c === 0 && d === 1;
+const isExactLoopbackIpv4 = ([a, b, c, d]: [number, number, number, number]) =>
+    a === 127 && b === 0 && c === 0 && d === 1;
 
-const isBlockedIpv4 = ([a, b, c, d]: [
-    number,
-    number,
-    number,
-    number,
-]): boolean => {
+const isBlockedIpv4 = ([a, b, c, d]: [number, number, number, number]) => {
     if (a === 10) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
@@ -190,7 +165,7 @@ const isBlockedIpv4 = ([a, b, c, d]: [
     return a === 127 && !isExactLoopbackIpv4([a, b, c, d]);
 };
 
-const isBlockedIpv6 = (hostname: string): boolean => {
+const isBlockedIpv6 = (hostname: string) => {
     if (hostname === "::1") return false;
 
     const normalized = hostname.toLowerCase();
@@ -221,15 +196,9 @@ const isBlockedIpv6 = (hostname: string): boolean => {
 // Exported utilities for the custom provider factory to validate every
 // DNS answer and every redirect hop at connection time.
 
-export type DnsResolveFn = (
-    hostname: string,
-    options?: { signal?: AbortSignal },
-) => Promise<string[]>;
+export type DnsResolveFn = (hostname: string, options?: { signal?: AbortSignal }) => Promise<string[]>;
 
-export const defaultDnsResolve = async (
-    hostname: string,
-    options?: { signal?: AbortSignal },
-): Promise<string[]> => {
+export const defaultDnsResolve = async (hostname: string, options?: { signal?: AbortSignal }) => {
     const signal = options?.signal;
     const [v4, v6] = await Promise.all([
         resolve4(hostname).catch(() => [] as string[]),
@@ -241,11 +210,7 @@ export const defaultDnsResolve = async (
     return [...v4, ...v6];
 };
 
-export const resolveAndValidateHostname = async (
-    hostname: string,
-    dnsResolve: DnsResolveFn,
-    signal?: AbortSignal,
-): Promise<string[]> => {
+export const resolveAndValidateHostname = async (hostname: string, dnsResolve: DnsResolveFn, signal?: AbortSignal) => {
     const normalized = normalizeHostname(hostname);
 
     if (normalized === "localhost" || normalized === "::1") {
@@ -297,19 +262,9 @@ export const resolveAndValidateHostname = async (
 
 type CustomFetch = typeof fetch;
 
-export const createSafeCustomFetch = (
-    dnsResolve: DnsResolveFn,
-): CustomFetch => {
-    const safeFetch = async (
-        input: Parameters<typeof fetch>[0],
-        init?: Parameters<typeof fetch>[1],
-    ): Promise<Response> => {
-        const requestUrl =
-            typeof input === "string"
-                ? input
-                : input instanceof URL
-                  ? input.toString()
-                  : input.url;
+export const createSafeCustomFetch = (dnsResolve: DnsResolveFn): CustomFetch => {
+    const safeFetch = async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         const url = new URL(requestUrl);
         const signal = init?.signal ?? undefined;
 
@@ -320,10 +275,7 @@ export const createSafeCustomFetch = (
             redirect: "manual",
         });
 
-        if (
-            (response.status >= 300 && response.status < 400) ||
-            response.redirected
-        ) {
+        if ((response.status >= 300 && response.status < 400) || response.redirected) {
             throw new Error("custom_url redirects are not allowed");
         }
 

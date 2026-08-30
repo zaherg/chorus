@@ -2,9 +2,9 @@ import { runConsensusCommand } from "@/commands/consensus";
 import { runListModelsCommand } from "@/commands/list-models";
 import pkg from "../package.json";
 
-const VERSION: string = pkg.version;
+const VERSION = pkg.version;
 
-export const runCli = async (args: string[]): Promise<number> => {
+export const runCli = async (args: string[]) => {
     if (args.length === 0) {
         return runConsensusCommand(args);
     }
@@ -31,7 +31,7 @@ export const runCli = async (args: string[]): Promise<number> => {
     return 1;
 };
 
-const printHelp = (): void => {
+const printHelp = () => {
     const help = `consensus ${VERSION} - multi-model consensus CLI
 
 USAGE:

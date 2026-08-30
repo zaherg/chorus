@@ -37,10 +37,8 @@ const LOGS_DIR = join(getConfigPaths().baseDir, "logs");
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const MAX_FILES = 3;
 
-export const resolveLogLevel = (configuredLevel?: LogLevel): LogTapeLevel => {
-    const raw = (
-        configuredLevel ?? process.env.CHORUS_LOG_LEVEL
-    )?.toLowerCase();
+export const resolveLogLevel = (configuredLevel?: LogLevel) => {
+    const raw = (configuredLevel ?? process.env.CHORUS_LOG_LEVEL)?.toLowerCase();
     if (raw && raw in LOGTAPE_LEVELS) {
         return LOGTAPE_LEVELS[raw as LogLevel];
     }
@@ -53,8 +51,7 @@ const CREDENTIAL_KEY_RE =
 function redactContextValue(value: unknown, depth: number): unknown {
     if (typeof value === "string") return redactSecrets(value);
     if (depth > 200) return value;
-    if (Array.isArray(value))
-        return value.map((v) => redactContextValue(v, depth + 1));
+    if (Array.isArray(value)) return value.map((v) => redactContextValue(v, depth + 1));
     if (value !== null && typeof value === "object") {
         const result: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -76,14 +73,10 @@ function redactContext(ctx: Record<string, unknown>): Record<string, unknown> {
 const wrapLogger = (category: string[]): WrappedLogger => {
     const lt = getLogger(category);
     return {
-        debug: (msg, ctx) =>
-            (ctx ? lt.with(redactContext(ctx)) : lt).debug(redactSecrets(msg)),
-        error: (msg, ctx) =>
-            (ctx ? lt.with(redactContext(ctx)) : lt).error(redactSecrets(msg)),
-        info: (msg, ctx) =>
-            (ctx ? lt.with(redactContext(ctx)) : lt).info(redactSecrets(msg)),
-        warn: (msg, ctx) =>
-            (ctx ? lt.with(redactContext(ctx)) : lt).warn(redactSecrets(msg)),
+        debug: (msg, ctx) => (ctx ? lt.with(redactContext(ctx)) : lt).debug(redactSecrets(msg)),
+        error: (msg, ctx) => (ctx ? lt.with(redactContext(ctx)) : lt).error(redactSecrets(msg)),
+        info: (msg, ctx) => (ctx ? lt.with(redactContext(ctx)) : lt).info(redactSecrets(msg)),
+        warn: (msg, ctx) => (ctx ? lt.with(redactContext(ctx)) : lt).warn(redactSecrets(msg)),
     };
 };
 
@@ -115,14 +108,14 @@ const SECRET_REDACTION_PATTERNS: Array<{
     { pattern: /\bsk-or-v1-[a-zA-Z0-9]{20,}\b/g, replacement: "[REDACTED]" },
 ];
 
-export const redactSecrets = (text: string): string => {
+export const redactSecrets = (text: string) => {
     for (const { pattern, replacement } of SECRET_REDACTION_PATTERNS) {
         text = text.replace(pattern, replacement);
     }
     return text;
 };
 
-export const configureLogging = async (logLevel?: LogLevel): Promise<void> => {
+export const configureLogging = async (logLevel?: LogLevel) => {
     mkdirSync(LOGS_DIR, { recursive: true });
 
     const level = resolveLogLevel(logLevel);
@@ -165,4 +158,4 @@ export const configureLogging = async (logLevel?: LogLevel): Promise<void> => {
     });
 };
 
-export const logger: WrappedLogger = wrapLogger(["chorus"]);
+export const logger = wrapLogger(["chorus"]);

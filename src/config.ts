@@ -1,11 +1,4 @@
-import {
-    chmodSync,
-    existsSync,
-    mkdirSync,
-    readFileSync,
-    statSync,
-    writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -13,8 +6,8 @@ import { z } from "zod/v4";
 
 import { getErrorMessage } from "@/utils";
 
-const getConfigDir = (): string => resolve(homedir(), ".config", "chorus");
-const getConfigPath = (): string => resolve(getConfigDir(), "config.json");
+const getConfigDir = () => resolve(homedir(), ".config", "chorus");
+const getConfigPath = () => resolve(getConfigDir(), "config.json");
 const CONFIG_DIR_MODE = 0o700;
 const CONFIG_FILE_MODE = 0o600;
 const supportsPosixModes = process.platform !== "win32";
@@ -51,11 +44,11 @@ const ChorusConfigSchema = z
 
 export type ChorusConfig = z.infer<typeof ChorusConfigSchema>;
 
-export const getConfigPaths = (): { baseDir: string; configPath: string } => {
+export const getConfigPaths = () => {
     return { baseDir: getConfigDir(), configPath: getConfigPath() };
 };
 
-const ensurePrivateMode = (path: string, mode: number, label: string): void => {
+const ensurePrivateMode = (path: string, mode: number, label: string) => {
     if (!supportsPosixModes) return;
 
     try {
@@ -64,36 +57,29 @@ const ensurePrivateMode = (path: string, mode: number, label: string): void => {
         }
     } catch (err) {
         process.stderr.write(
-            `Warning: could not set private permissions on ${label} ${path}: ${getErrorMessage(
-                err,
-            )}\n`,
+            `Warning: could not set private permissions on ${label} ${path}: ${getErrorMessage(err)}\n`,
         );
     }
 };
 
-const ensureConfigDirectories = (): void => {
+const ensureConfigDirectories = () => {
     const configDir = getConfigDir();
     mkdirSync(configDir, { mode: CONFIG_DIR_MODE, recursive: true });
     ensurePrivateMode(configDir, CONFIG_DIR_MODE, "config directory");
 };
 
-const resolveEnvVars = (
-    raw: Record<string, unknown>,
-): Record<string, unknown> => {
+const resolveEnvVars = (raw: Record<string, unknown>) => {
     const resolved: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(raw)) {
         resolved[key] =
             typeof value === "string"
-                ? value.replace(
-                      /\$([A-Z_][A-Z0-9_]*)/g,
-                      (_, name) => process.env[name] ?? `$${name}`,
-                  )
+                ? value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, name) => process.env[name] ?? `$${name}`)
                 : value;
     }
     return resolved;
 };
 
-const DEFAULT_CONFIG: Record<string, unknown> = {
+const DEFAULT_CONFIG = {
     cli_timeout_ms: 30_000,
     provider_timeout_ms: 120_000,
     log_level: "info",
@@ -108,18 +94,16 @@ const DEFAULT_CONFIG: Record<string, unknown> = {
     allow_insecure_custom: false,
 };
 
-const writeDefaultConfig = (): void => {
+const writeDefaultConfig = () => {
     ensureConfigDirectories();
     const configPath = getConfigPath();
-    writeFileSync(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2) + "\n", {
+    writeFileSync(configPath, `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`, {
         mode: CONFIG_FILE_MODE,
     });
     ensurePrivateMode(configPath, CONFIG_FILE_MODE, "config file");
-    process.stderr.write(
-        `Default config written to ${configPath}. Edit it to set your API keys and preferences.\n`,
-    );
+    process.stderr.write(`Default config written to ${configPath}. Edit it to set your API keys and preferences.\n`);
 };
-export const loadConfig = async (): Promise<ChorusConfig> => {
+export const loadConfig = async () => {
     const configPath = getConfigPath();
     ensureConfigDirectories();
 
@@ -129,10 +113,7 @@ export const loadConfig = async (): Promise<ChorusConfig> => {
         ensurePrivateMode(configPath, CONFIG_FILE_MODE, "config file");
     }
 
-    const raw = JSON.parse(readFileSync(configPath, "utf-8")) as Record<
-        string,
-        unknown
-    >;
+    const raw = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
     const resolved = resolveEnvVars(raw);
 
     return ChorusConfigSchema.parse(resolved);

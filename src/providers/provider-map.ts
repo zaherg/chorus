@@ -24,13 +24,10 @@ const PROVIDER_TO_MODELS_DEV_KEY: Record<ProviderId, string | undefined> = {
  * Returns the models.dev provider key for the internal `ProviderId`, or
  * `undefined` for passthrough providers (`custom`).
  */
-export const getModelsDevProviderKey = (
-    providerId: ProviderId,
-): string | undefined => PROVIDER_TO_MODELS_DEV_KEY[providerId];
+export const getModelsDevProviderKey = (providerId: ProviderId) => PROVIDER_TO_MODELS_DEV_KEY[providerId];
 
 /**
  * Convenience predicate: `true` when the provider has a models.dev catalog
  * entry, `false` for passthrough providers.
  */
-export const isCatalogBackedProvider = (providerId: ProviderId): boolean =>
-    PROVIDER_TO_MODELS_DEV_KEY[providerId] !== undefined;
+export const isCatalogBackedProvider = (providerId: ProviderId) => PROVIDER_TO_MODELS_DEV_KEY[providerId] !== undefined;

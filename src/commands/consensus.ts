@@ -4,35 +4,14 @@ import { getConfigPaths, loadConfig } from "@/config";
 import { runConsensus } from "@/consensus";
 import { makeLocalFileReader, makeLocalFileWriter } from "@/providers/cache-fs";
 import { loadCatalog } from "@/providers/model-catalog";
-import {
-    createProviderRegistry,
-    isProviderConfigured,
-} from "@/providers/registry";
-import {
-    classifyInput,
-    type ResolveRouteOptions,
-    resolveRoute,
-} from "@/providers/resolve-route";
-import type {
-    ConsensusModelConfig,
-    ParticipantError,
-    Stance,
-} from "@/types/consensus";
-import {
-    type BrokerModelInfo,
-    type ProviderId,
-    providerIdValues,
-} from "@/types/providers";
+import { createProviderRegistry, isProviderConfigured } from "@/providers/registry";
+import { classifyInput, type ResolveRouteOptions, resolveRoute } from "@/providers/resolve-route";
+import type { ParticipantError, Stance } from "@/types/consensus";
+import { type BrokerModelInfo, providerIdValues } from "@/types/providers";
 import { getErrorMessage } from "@/utils";
 import { configureLogging } from "@/utils/logger";
 
-const THINKING_MODE_VALUES = [
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "max",
-] as const;
+const THINKING_MODE_VALUES = ["minimal", "low", "medium", "high", "max"] as const;
 type ThinkingMode = (typeof THINKING_MODE_VALUES)[number];
 
 const SCHEMA_JSON = {
@@ -64,22 +43,15 @@ const StdinConsensusSchema = z.object({
     prompt: z.string().min(1),
     findings: z.string().optional(),
     step: z.string().optional(),
-    stances: z
-        .record(z.string(), z.enum(["for", "against", "neutral"]))
-        .optional(),
-    thinking_modes: z
-        .record(z.string(), z.enum(THINKING_MODE_VALUES))
-        .optional(),
+    stances: z.record(z.string(), z.enum(["for", "against", "neutral"])).optional(),
+    thinking_modes: z.record(z.string(), z.enum(THINKING_MODE_VALUES)).optional(),
     temperatures: z.record(z.string(), z.number().min(0).max(1)).optional(),
     temperature: z.number().min(0).max(1).optional(),
     files: z.array(z.string()).optional(),
     synthesis_model: z.string().optional(),
 });
 
-const parseModelKeyValueFlags = <T>(
-    flags: string[],
-    validate: (raw: string) => T | undefined,
-): Record<string, T> => {
+const parseModelKeyValueFlags = <T>(flags: string[], validate: (raw: string) => T | undefined) => {
     const result: Record<string, T> = {};
     for (const f of flags) {
         const eqIdx = f.indexOf("=");
@@ -93,7 +65,7 @@ const parseModelKeyValueFlags = <T>(
     return result;
 };
 
-const parseRepeatableFlag = (args: string[], flagName: string): string[] => {
+const parseRepeatableFlag = (args: string[], flagName: string) => {
     const results: string[] = [];
     for (let i = 0; i < args.length; i++) {
         if (args[i] === flagName && i + 1 < args.length) {
@@ -104,10 +76,7 @@ const parseRepeatableFlag = (args: string[], flagName: string): string[] => {
     return results;
 };
 
-const parseSingleFlag = (
-    args: string[],
-    flagName: string,
-): string | undefined => {
+const parseSingleFlag = (args: string[], flagName: string) => {
     for (let i = 0; i < args.length; i++) {
         if (args[i] === flagName && i + 1 < args.length) {
             return args[i + 1];
@@ -116,15 +85,15 @@ const parseSingleFlag = (
     return undefined;
 };
 
-const parseBooleanFlag = (args: string[], flagName: string): boolean => {
+const parseBooleanFlag = (args: string[], flagName: string) => {
     return args.includes(flagName);
 };
 
-const printError = (payload: object): void => {
+const printError = (payload: object) => {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 };
 
-const brokerError = (code: string, message: string, extra?: object): void => {
+const brokerError = (code: string, message: string, extra?: object) => {
     printError({
         ok: false,
         schema: "cli.consensus.error/1",
@@ -135,9 +104,7 @@ const brokerError = (code: string, message: string, extra?: object): void => {
 const resolveOne = async (
     input: string,
     options: ResolveRouteOptions,
-): Promise<
-    { ok: true; value: BrokerModelInfo } | { ok: false; handled: boolean }
-> => {
+): Promise<{ ok: true; value: BrokerModelInfo } | { ok: false; handled: boolean }> => {
     const classified = classifyInput(input);
     const result = await resolveRoute(classified, options);
     if (result.ok) {
@@ -156,7 +123,7 @@ const resolveOne = async (
     return { ok: false, handled: true };
 };
 
-export const runConsensusCommand = async (args: string[]): Promise<number> => {
+export const runConsensusCommand = async (args: string[]) => {
     if (parseBooleanFlag(args, "--schema")) {
         process.stdout.write(`${JSON.stringify(SCHEMA_JSON, null, 2)}\n`);
         return 0;
@@ -182,7 +149,7 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
     let modelTemperatures: Record<string, number> = {};
     let globalTemperature: number | undefined;
     let relevantFiles: string[] = [];
-    let synthesisModel: string | undefined = synthesisModelFlag;
+    let synthesisModel = synthesisModelFlag;
 
     if (stdinJson) {
         const chunks: Buffer[] = [];
@@ -194,9 +161,7 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
         try {
             parsed = StdinConsensusSchema.parse(JSON.parse(stdinText));
         } catch (e) {
-            process.stderr.write(
-                `Error: Invalid --stdin-json input: ${getErrorMessage(e)}\n`,
-            );
+            process.stderr.write(`Error: Invalid --stdin-json input: ${getErrorMessage(e)}\n`);
             return 2;
         }
         modelInputs = parsed.models;
@@ -211,9 +176,7 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
         synthesisModel = parsed.synthesis_model ?? synthesisModel;
     } else {
         if (!modelsStr) {
-            process.stderr.write(
-                "Error: --models is required (comma-separated route_ids or provider-native IDs)\n",
-            );
+            process.stderr.write("Error: --models is required (comma-separated route_ids or provider-native IDs)\n");
             return 2;
         }
         modelInputs = modelsStr
@@ -222,9 +185,7 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
             .filter(Boolean);
 
         if (!prompt) {
-            process.stderr.write(
-                "Error: --prompt is required (or use --stdin-json)\n",
-            );
+            process.stderr.write("Error: --prompt is required (or use --stdin-json)\n");
             return 2;
         }
         promptText = prompt;
@@ -234,9 +195,7 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
         if (temperatureStr) {
             const t = parseFloat(temperatureStr);
             if (Number.isNaN(t) || t < 0 || t > 1) {
-                process.stderr.write(
-                    "Error: --temperature must be a number between 0 and 1\n",
-                );
+                process.stderr.write("Error: --temperature must be a number between 0 and 1\n");
                 return 2;
             }
             globalTemperature = t;
@@ -250,15 +209,11 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
         }
 
         modelStances = parseModelKeyValueFlags(stanceFlags, (v) =>
-            ["for", "against", "neutral"].includes(v)
-                ? (v as Stance)
-                : undefined,
+            ["for", "against", "neutral"].includes(v) ? (v as Stance) : undefined,
         );
 
         modelThinkingModes = parseModelKeyValueFlags(thinkingModeFlags, (v) =>
-            THINKING_MODE_VALUES.includes(v as ThinkingMode)
-                ? (v as ThinkingMode)
-                : undefined,
+            THINKING_MODE_VALUES.includes(v as ThinkingMode) ? (v as ThinkingMode) : undefined,
         );
 
         modelTemperatures = parseModelKeyValueFlags(tempModelFlags, (v) => {
@@ -277,9 +232,7 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
         config = await loadConfig();
         await configureLogging(config.log_level);
     } catch (e) {
-        process.stderr.write(
-            `Error: Failed to load config: ${getErrorMessage(e)}\n`,
-        );
+        process.stderr.write(`Error: Failed to load config: ${getErrorMessage(e)}\n`);
         return 1;
     }
 
@@ -296,11 +249,9 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
         return 1;
     }
 
-    const configuredProviders = new Set<ProviderId>(
-        providerIdValues.filter((id) => isProviderConfigured(id, config)),
-    );
+    const configuredProviders = new Set(providerIdValues.filter((id) => isProviderConfigured(id, config)));
 
-    const routeOptions: ResolveRouteOptions = {
+    const routeOptions = {
         catalog,
         configuredProviders,
     };
@@ -339,15 +290,11 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
         );
     }
 
-    const participantContextWindows = resolved
-        .map((info) => info.context_window)
-        .filter((w): w is number => w !== undefined);
+    const participantContextWindows = resolved.map((info) => info.context_window).filter((w) => w !== undefined);
     const modelContextWindow =
-        participantContextWindows.length > 0
-            ? Math.min(...participantContextWindows)
-            : undefined;
+        participantContextWindows.length > 0 ? Math.min(...participantContextWindows) : undefined;
 
-    const models: ConsensusModelConfig[] = resolved.map((info) => ({
+    const models = resolved.map((info) => ({
         model: info.route_id,
         stance: modelStances[info.route_id],
         temperature: modelTemperatures[info.route_id],
@@ -361,10 +308,7 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
     };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
-    const cliTimeout = setTimeout(
-        () => abortController.abort(),
-        config.cli_timeout_ms,
-    );
+    const cliTimeout = setTimeout(() => abortController.abort(), config.cli_timeout_ms);
     try {
         result = await runConsensus({
             providerRegistry: createProviderRegistry(config),

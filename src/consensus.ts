@@ -25,12 +25,8 @@ const buildConsensusPrompt = (
     stance: Stance,
     fileText: string,
     priorResponses?: ParticipantResponse[],
-): string => {
-    const sections = [
-        `Consensus review for stance: ${stance}`,
-        `Proposal:\n${step}`,
-        `Current findings:\n${findings}`,
-    ];
+) => {
+    const sections = [`Consensus review for stance: ${stance}`, `Proposal:\n${step}`, `Current findings:\n${findings}`];
     if (priorResponses?.length) {
         sections.push(
             `<previous-model-responses>\n${JSON.stringify(priorResponses, null, 2)}\n</previous-model-responses>`,
@@ -47,7 +43,7 @@ const buildSynthesisPrompt = (
     findings: string,
     successfulResponses: ParticipantResponse[],
     fileText: string,
-): string => {
+) => {
     const sections = [
         "Synthesize the following model perspectives into a single recommendation.",
         `Proposal:\n${step}`,
@@ -67,7 +63,7 @@ const queryModel = async (
     priorResponses?: ParticipantResponse[],
 ): Promise<ParticipantResponse> => {
     const modelId = modelConfig.model;
-    const stance: Stance = modelConfig.stance ?? "neutral";
+    const stance = modelConfig.stance ?? "neutral";
     const modelInfo = await request.providerRegistry.getModelInfo(modelId, {
         catalog: request.catalog,
         configuredProviders: request.configuredProviders,
@@ -87,26 +83,15 @@ const queryModel = async (
         };
     }
 
-    const prompt = buildConsensusPrompt(
-        request.step,
-        request.findings,
-        stance,
-        fileText,
-        priorResponses,
-    );
+    const prompt = buildConsensusPrompt(request.step, request.findings, stance, fileText, priorResponses);
     const temperature = modelConfig.temperature ?? request.temperature;
-    const result = await request.providerRegistry.generateText(
-        modelInfo.route_id,
-        prompt,
-        CONSENSUS_SYSTEM_PROMPT,
-        {
-            abortSignal: request.abortSignal,
-            catalog: request.catalog,
-            configuredProviders: request.configuredProviders,
-            temperature,
-            thinkingMode: modelConfig.thinking_mode,
-        },
-    );
+    const result = await request.providerRegistry.generateText(modelInfo.route_id, prompt, CONSENSUS_SYSTEM_PROMPT, {
+        abortSignal: request.abortSignal,
+        catalog: request.catalog,
+        configuredProviders: request.configuredProviders,
+        temperature,
+        thinkingMode: modelConfig.thinking_mode,
+    });
 
     if (!result.ok) {
         return {
@@ -137,12 +122,12 @@ const runSettledWithConcurrency = async <T, R>(
     items: T[],
     maxConcurrency: number,
     worker: (item: T, index: number) => Promise<R>,
-): Promise<PromiseSettledResult<R>[]> => {
+) => {
     const limit = Math.max(1, Math.min(items.length, maxConcurrency ?? 1));
     const results = new Array<PromiseSettledResult<R>>(items.length);
     let nextIndex = 0;
 
-    const runner = async (): Promise<void> => {
+    const runner = async () => {
         while (nextIndex < items.length) {
             const index = nextIndex;
             nextIndex++;
@@ -161,10 +146,7 @@ const runSettledWithConcurrency = async <T, R>(
     return results;
 };
 
-const failedParticipant = (
-    modelId: string,
-    reason: unknown,
-): ParticipantResponse => {
+const failedParticipant = (modelId: string, reason: unknown): ParticipantResponse => {
     // Inspect the error to decide retryability.
     // Abort/timeout errors are retryable (transient).
     // Structured errors with an explicit retryable field are honoured.
@@ -177,18 +159,10 @@ const failedParticipant = (
         const name = reason.name;
         if (name === "AbortError" || name === "TimeoutError") {
             retryable = true;
-        } else if (
-            "retryable" in reason &&
-            typeof (reason as Record<string, unknown>).retryable === "boolean"
-        ) {
-            retryable = (reason as Record<string, unknown>)
-                .retryable as boolean;
+        } else if ("retryable" in reason && typeof (reason as Record<string, unknown>).retryable === "boolean") {
+            retryable = (reason as Record<string, unknown>).retryable as boolean;
         }
-    } else if (
-        reason !== null &&
-        typeof reason === "object" &&
-        "retryable" in reason
-    ) {
+    } else if (reason !== null && typeof reason === "object" && "retryable" in reason) {
         const val = (reason as Record<string, unknown>).retryable;
         if (typeof val === "boolean") {
             retryable = val;
@@ -209,9 +183,7 @@ const failedParticipant = (
     };
 };
 
-export const runConsensus = async (
-    request: ConsensusRequest,
-): Promise<ConsensusResult | ConsensusError> => {
+export const runConsensus = async (request: ConsensusRequest): Promise<ConsensusResult | ConsensusError> => {
     if (request.models.length === 0) {
         return {
             ok: false,
@@ -219,7 +191,7 @@ export const runConsensus = async (
         };
     }
 
-    const embeddedFiles: EmbeddedFileResult = request.relevantFiles?.length
+    const embeddedFiles = request.relevantFiles?.length
         ? await embedFiles(request.relevantFiles, request.modelContextWindow)
         : EMPTY_EMBEDDED;
 
@@ -230,17 +202,14 @@ export const runConsensus = async (
         const results = await runSettledWithConcurrency(
             request.models,
             request.maxConcurrency ?? request.models.length,
-            (modelConfig) =>
-                queryModel(modelConfig, request, embeddedFiles.embedded_text),
+            (modelConfig) => queryModel(modelConfig, request, embeddedFiles.embedded_text),
         );
         for (let i = 0; i < results.length; i++) {
             const r = results[i];
             if (r.status === "fulfilled") {
                 participantResponses.push(r.value);
             } else {
-                participantResponses.push(
-                    failedParticipant(request.models[i].model, r.reason),
-                );
+                participantResponses.push(failedParticipant(request.models[i].model, r.reason));
             }
         }
     } else {
@@ -249,33 +218,19 @@ export const runConsensus = async (
             // cancelled consensus run does not fire every remaining
             // model call.
             if (request.abortSignal?.aborted) {
-                participantResponses.push(
-                    failedParticipant(modelConfig.model, "Aborted"),
-                );
+                participantResponses.push(failedParticipant(modelConfig.model, "Aborted"));
                 continue;
             }
 
-            const priorResponses =
-                participantResponses.length > 0
-                    ? participantResponses
-                    : undefined;
+            const priorResponses = participantResponses.length > 0 ? participantResponses : undefined;
             try {
-                const response = await queryModel(
-                    modelConfig,
-                    request,
-                    embeddedFiles.embedded_text,
-                    priorResponses,
-                );
+                const response = await queryModel(modelConfig, request, embeddedFiles.embedded_text, priorResponses);
                 if (response.error) {
-                    logger?.warn(
-                        `Model ${modelConfig.model} failed: ${response.error.message}`,
-                    );
+                    logger?.warn(`Model ${modelConfig.model} failed: ${response.error.message}`);
                 }
                 participantResponses.push(response);
             } catch (e) {
-                participantResponses.push(
-                    failedParticipant(modelConfig.model, e),
-                );
+                participantResponses.push(failedParticipant(modelConfig.model, e));
             }
         }
     }
@@ -283,21 +238,14 @@ export const runConsensus = async (
     // All paths always populate participantResponses: runSettledWithConcurrency
     // produces exactly items.length results, and the sequential loop always pushes.
     // The earlier models.length === 0 guard prevents empty request.models.
-    const successCount = participantResponses.filter(
-        (r) => r.response !== null,
-    ).length;
+    const successCount = participantResponses.filter((r) => r.response !== null).length;
     if (successCount === 0) {
         const details = participantResponses.map((r) =>
-            r.error
-                ? `${r.route_id}: ${r.error.message}`
-                : `${r.route_id}: unknown failure`,
+            r.error ? `${r.route_id}: ${r.error.message}` : `${r.route_id}: unknown failure`,
         );
         return {
             ok: false,
-            errors: [
-                `All participant model calls failed: ${participantResponses.length} attempted`,
-                ...details,
-            ],
+            errors: [`All participant model calls failed: ${participantResponses.length} attempted`, ...details],
         };
     }
 
@@ -306,13 +254,10 @@ export const runConsensus = async (
 
     if (request.synthesisModel) {
         const synthesisRouteId = request.synthesisModel;
-        const synthesisInfo = await request.providerRegistry.getModelInfo(
-            synthesisRouteId,
-            {
-                catalog: request.catalog,
-                configuredProviders: request.configuredProviders,
-            },
-        );
+        const synthesisInfo = await request.providerRegistry.getModelInfo(synthesisRouteId, {
+            catalog: request.catalog,
+            configuredProviders: request.configuredProviders,
+        });
         if (!synthesisInfo) {
             synthesisError = {
                 code: "provider_request_failed",
@@ -320,9 +265,7 @@ export const runConsensus = async (
                 retryable: false,
             };
         } else {
-            const successfulResponses = participantResponses.filter(
-                (r) => r.response !== null,
-            );
+            const successfulResponses = participantResponses.filter((r) => r.response !== null);
             const synthesisPrompt = buildSynthesisPrompt(
                 request.step,
                 request.findings,

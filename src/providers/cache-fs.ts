@@ -8,7 +8,7 @@ import type { FileReader, FileWriter } from "./model-catalog";
  * Resolves a cache path against a config directory. Absolute paths are
  * returned unchanged; relative paths are joined onto `configDir`.
  */
-const resolveCachePath = (configDir: string, path: string): string => {
+const resolveCachePath = (configDir: string, path: string) => {
     if (isAbsolute(path)) {
         return path;
     }

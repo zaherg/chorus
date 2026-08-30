@@ -39,10 +39,7 @@ import {
 } from "@/types/providers";
 import { getErrorMessage } from "@/utils";
 import pkg from "../../package.json";
-import {
-    getModelsDevProviderKey,
-    isCatalogBackedProvider,
-} from "./provider-map";
+import { getModelsDevProviderKey, isCatalogBackedProvider } from "./provider-map";
 
 // === Constants ===
 
@@ -61,9 +58,7 @@ export type FetchFn = (
     init: { headers: Record<string, string>; signal: AbortSignal },
 ) => Promise<Response>;
 
-export type FileReader = (
-    path: string,
-) => { ok: true; text: string } | { ok: false; code: "missing" | "io_error" };
+export type FileReader = (path: string) => { ok: true; text: string } | { ok: false; code: "missing" | "io_error" };
 
 export type FileWriter = (
     path: string,
@@ -92,9 +87,7 @@ export type FetchCatalogSuccess = {
     source: string;
 };
 
-export type FetchCatalogResult =
-    | FetchCatalogSuccess
-    | { ok: false; error: FetchCatalogError };
+export type FetchCatalogResult = FetchCatalogSuccess | { ok: false; error: FetchCatalogError };
 
 export type ReadCacheStatus = "fresh" | "stale" | "missing" | "invalid";
 
@@ -118,18 +111,15 @@ export const METADATA_FILE_NAME = "metadata.json";
 export const CATALOG_RELATIVE_PATH = `${CACHE_DIR_NAME}/${CATALOG_FILE_NAME}`;
 export const METADATA_RELATIVE_PATH = `${CACHE_DIR_NAME}/${METADATA_FILE_NAME}`;
 
-export const getModelsCacheDir = (configDir: string): string =>
-    resolve(configDir, CACHE_DIR_NAME);
+export const getModelsCacheDir = (configDir: string) => resolve(configDir, CACHE_DIR_NAME);
 
-export const getCatalogPath = (configDir: string): string =>
-    resolve(getModelsCacheDir(configDir), CATALOG_FILE_NAME);
+export const getCatalogPath = (configDir: string) => resolve(getModelsCacheDir(configDir), CATALOG_FILE_NAME);
 
-export const getMetadataPath = (configDir: string): string =>
-    resolve(getModelsCacheDir(configDir), METADATA_FILE_NAME);
+export const getMetadataPath = (configDir: string) => resolve(getModelsCacheDir(configDir), METADATA_FILE_NAME);
 
 // === Fetch ===
 
-const isAbortLikeError = (err: unknown): boolean => {
+const isAbortLikeError = (err: unknown) => {
     if (!(err instanceof Error)) {
         return false;
     }
@@ -141,13 +131,11 @@ export const fetchCatalog = async (
     now: () => Date = () => new Date(),
     options: { timeoutMs?: number; userAgent?: string } = {},
 ): Promise<FetchCatalogResult> => {
-    const headers: Record<string, string> = {
+    const headers = {
         Accept: "application/json",
         "User-Agent": options.userAgent ?? DEFAULT_USER_AGENT,
     };
-    const signal = AbortSignal.timeout(
-        options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
-    );
+    const signal = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS);
 
     let response: Response;
     try {
@@ -270,10 +258,7 @@ export const fetchCatalog = async (
             error: {
                 code: "schema_invalid",
                 message: validation.error.issues
-                    .map(
-                        (issue) =>
-                            `${issue.path.join(".") || "<root>"}: ${issue.message}`,
-                    )
+                    .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
                     .join("; "),
             },
         };
@@ -289,10 +274,7 @@ export const fetchCatalog = async (
 
 // === Cache read ===
 
-export const readCache = (
-    reader: FileReader,
-    now: () => Date = () => new Date(),
-): ReadCacheResult => {
+export const readCache = (reader: FileReader, now: () => Date = () => new Date()): ReadCacheResult => {
     const metadataPath = METADATA_RELATIVE_PATH;
     const metaResult = reader(metadataPath);
     if (!metaResult.ok) {
@@ -375,7 +357,7 @@ export const writeCache = (
 
 // === Normalization ===
 
-const finitePositive = (value: number | undefined): number | undefined => {
+const finitePositive = (value: number | undefined) => {
     if (value === undefined) {
         return undefined;
     }
@@ -389,7 +371,7 @@ const findCanonicalModelId = (
     modelId: string,
     modelsDevProviderKey: string,
     canonicalModels: Record<string, unknown>,
-): string | undefined => {
+) => {
     for (const [key, value] of Object.entries(canonicalModels)) {
         if (value === null || typeof value !== "object") {
             continue;
@@ -407,7 +389,7 @@ export const normalizeProviderModels = (
     modelsDevProviderKey: string,
     providerCatalog: ProviderCatalog,
     canonicalModels: Record<string, unknown>,
-): BrokerModelInfo[] => {
+) => {
     const out: BrokerModelInfo[] = [];
     for (const [modelId, rawEntry] of Object.entries(providerCatalog.models)) {
         const entryValidation = ProviderModelEntrySchema.safeParse(rawEntry);
@@ -416,11 +398,7 @@ export const normalizeProviderModels = (
         }
         const entry = entryValidation.data;
 
-        const canonical = findCanonicalModelId(
-            modelId,
-            modelsDevProviderKey,
-            canonicalModels,
-        );
+        const canonical = findCanonicalModelId(modelId, modelsDevProviderKey, canonicalModels);
 
         const candidate = {
             route_id: `${providerId}/${modelId}`,
@@ -432,9 +410,7 @@ export const normalizeProviderModels = (
             supports_reasoning: entry.reasoning,
             supports_tools: entry.tool_call,
             supports_structured_output: entry.structured_output,
-            ...(canonical !== undefined
-                ? { canonical_model_id: canonical }
-                : {}),
+            ...(canonical !== undefined ? { canonical_model_id: canonical } : {}),
         };
 
         const validation = BrokerModelInfoSchema.safeParse(candidate);
@@ -475,11 +451,7 @@ export type LoadCatalogFailure = {
 
 export type LoadCatalogResult = LoadCatalogSuccess | LoadCatalogFailure;
 
-const buildMetadata = (
-    fetchedAt: string,
-    source: string,
-    now: () => Date,
-): CacheMetadata => {
+const buildMetadata = (fetchedAt: string, source: string, now: () => Date): CacheMetadata => {
     const expiresAt = new Date(now().getTime() + CACHE_TTL_MS).toISOString();
     return {
         schema: CACHE_SCHEMA,
@@ -489,10 +461,7 @@ const buildMetadata = (
     };
 };
 
-const buildProviderEntry = (
-    providerId: ProviderId,
-    catalog: CatalogJson,
-): ProviderListEntry => {
+const buildProviderEntry = (providerId: ProviderId, catalog: CatalogJson): ProviderListEntry => {
     if (!isCatalogBackedProvider(providerId)) {
         return { status: "passthrough", models: [] };
     }
@@ -504,19 +473,13 @@ const buildProviderEntry = (
     if (rawProvider === undefined) {
         return { status: "catalog", models: [] };
     }
-    const providerCatalogValidation =
-        ProviderCatalogSchema.safeParse(rawProvider);
+    const providerCatalogValidation = ProviderCatalogSchema.safeParse(rawProvider);
     if (!providerCatalogValidation.success) {
         return { status: "catalog", models: [] };
     }
     return {
         status: "catalog",
-        models: normalizeProviderModels(
-            providerId,
-            modelsDevKey,
-            providerCatalogValidation.data,
-            catalog.models,
-        ),
+        models: normalizeProviderModels(providerId, modelsDevKey, providerCatalogValidation.data, catalog.models),
     };
 };
 
@@ -525,9 +488,7 @@ const buildProviderEntry = (
 // redundant parallel fetches from the upstream catalog URL.
 const loadCatalogDedup: Map<string, Promise<LoadCatalogResult>> = new Map();
 
-export const loadCatalog = async (
-    options: LoadCatalogOptions,
-): Promise<LoadCatalogResult> => {
+export const loadCatalog = async (options: LoadCatalogOptions): Promise<LoadCatalogResult> => {
     const dedupKey = `${options.configDir}::${!!options.forceRefresh}`;
     const inFlight = loadCatalogDedup.get(dedupKey);
     if (inFlight !== undefined) {
@@ -535,15 +496,7 @@ export const loadCatalog = async (
     }
 
     const impl = async (): Promise<LoadCatalogResult> => {
-        const {
-            fetchFn,
-            reader,
-            writer,
-            now = () => new Date(),
-            forceRefresh = false,
-            userAgent,
-            timeoutMs,
-        } = options;
+        const { fetchFn, reader, writer, now = () => new Date(), forceRefresh = false, userAgent, timeoutMs } = options;
 
         const cacheState = readCache(reader, now);
 
@@ -552,12 +505,7 @@ export const loadCatalog = async (
         let warning: string | undefined;
         let cacheStatusValue: CacheStatus = "stale";
 
-        if (
-            !forceRefresh &&
-            cacheState.status === "fresh" &&
-            cacheState.metadata &&
-            cacheState.catalog !== undefined
-        ) {
+        if (!forceRefresh && cacheState.status === "fresh" && cacheState.metadata && cacheState.catalog !== undefined) {
             activeCatalog = cacheState.catalog;
             activeMetadata = cacheState.metadata;
             cacheStatusValue = "fresh";
@@ -567,11 +515,7 @@ export const loadCatalog = async (
                 timeoutMs,
             });
             if (!fetched.ok) {
-                if (
-                    cacheState.status === "stale" &&
-                    cacheState.metadata &&
-                    cacheState.catalog !== undefined
-                ) {
+                if (cacheState.status === "stale" && cacheState.metadata && cacheState.catalog !== undefined) {
                     activeCatalog = cacheState.catalog;
                     activeMetadata = cacheState.metadata;
                     warning = fetched.error.message;
@@ -589,11 +533,7 @@ export const loadCatalog = async (
                 activeCatalog = fetched.catalog;
                 const fetchedAt = fetched.fetchedAt;
                 activeMetadata = buildMetadata(fetchedAt, fetched.source, now);
-                const writeResult = writeCache(
-                    writer,
-                    activeCatalog,
-                    activeMetadata,
-                );
+                const writeResult = writeCache(writer, activeCatalog, activeMetadata);
                 if (!writeResult.ok) {
                     return {
                         ok: false,
@@ -661,10 +601,7 @@ export const loadCatalog = async (
             ok: true,
             schema: "models.list/1",
             cache: payloadValidation.data.cache,
-            providers: payloadValidation.data.providers as Record<
-                ProviderId,
-                ProviderListEntry
-            >,
+            providers: payloadValidation.data.providers as Record<ProviderId, ProviderListEntry>,
         };
         if (warning !== undefined) {
             result.warning = warning;

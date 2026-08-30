@@ -2,12 +2,7 @@ import { getConfigPaths, loadConfig } from "@/config";
 import { makeLocalFileReader, makeLocalFileWriter } from "@/providers/cache-fs";
 import { loadCatalog } from "@/providers/model-catalog";
 import { isProviderConfigured } from "@/providers/registry";
-import type {
-    BrokerModelInfo,
-    ModelsListResponse,
-    ProviderId,
-    ProviderListEntry,
-} from "@/types/providers";
+import type { BrokerModelInfo, ModelsListResponse, ProviderId, ProviderListEntry } from "@/types/providers";
 import { getErrorMessage } from "@/utils";
 import { configureLogging } from "@/utils/logger";
 
@@ -74,7 +69,7 @@ FLAGS:
   --help, -h     Print this help and exit
 `;
 
-const formatCapabilityFlags = (model: BrokerModelInfo): string => {
+const formatCapabilityFlags = (model: BrokerModelInfo) => {
     const flags: string[] = [];
     if (model.context_window !== undefined) {
         flags.push(`[ctx: ${model.context_window}]`);
@@ -91,10 +86,7 @@ const formatCapabilityFlags = (model: BrokerModelInfo): string => {
     return flags.length > 0 ? ` ${flags.join(" ")}` : "";
 };
 
-const formatHuman = (
-    response: ModelsListResponse,
-    warning: string | undefined,
-): string => {
+const formatHuman = (response: ModelsListResponse, warning: string | undefined) => {
     const lines: string[] = [];
     const providerIds = Object.keys(response.providers) as ProviderId[];
     lines.push(`${providerIds.length} configured providers:`);
@@ -107,9 +99,7 @@ const formatHuman = (
         } else {
             for (const model of entry.models) {
                 const caps = formatCapabilityFlags(model);
-                lines.push(
-                    `    - ${model.route_id}  ${model.display_name}${caps}`,
-                );
+                lines.push(`    - ${model.route_id}  ${model.display_name}${caps}`);
             }
         }
         lines.push("");
@@ -123,16 +113,11 @@ const formatHuman = (
     return `${lines.join("\n")}\n`;
 };
 
-const formatHumanError = (message: string): string => `Error: ${message}\n`;
+const formatHumanError = (message: string) => `Error: ${message}\n`;
 
-const filterConfiguredProviders = (
-    response: ModelsListResponse,
-    config: Awaited<ReturnType<typeof loadConfig>>,
-): ModelsListResponse => {
+const filterConfiguredProviders = (response: ModelsListResponse, config: Awaited<ReturnType<typeof loadConfig>>) => {
     const filtered = Object.fromEntries(
-        Object.entries(response.providers).filter(([id]) =>
-            isProviderConfigured(id as ProviderId, config),
-        ),
+        Object.entries(response.providers).filter(([id]) => isProviderConfigured(id as ProviderId, config)),
     ) as Record<ProviderId, ProviderListEntry>;
     return {
         schema: response.schema,
@@ -141,10 +126,7 @@ const filterConfiguredProviders = (
     };
 };
 
-const modelMatchesFilter = (
-    model: BrokerModelInfo,
-    needle: string,
-): boolean => {
+const modelMatchesFilter = (model: BrokerModelInfo, needle: string) => {
     if (model.route_id.toLowerCase().includes(needle)) {
         return true;
     }
@@ -160,10 +142,7 @@ const modelMatchesFilter = (
     return false;
 };
 
-const applyModelFilter = (
-    response: ModelsListResponse,
-    filter: string | undefined,
-): ModelsListResponse => {
+const applyModelFilter = (response: ModelsListResponse, filter: string | undefined) => {
     if (filter === undefined) {
         return response;
     }
@@ -173,16 +152,14 @@ const applyModelFilter = (
             id,
             {
                 ...entry,
-                models: entry.models.filter((m) =>
-                    modelMatchesFilter(m, needle),
-                ),
+                models: entry.models.filter((m) => modelMatchesFilter(m, needle)),
             },
         ]),
     ) as Record<ProviderId, ProviderListEntry>;
     return { ...response, providers };
 };
 
-export const runListModelsCommand = async (args: string[]): Promise<number> => {
+export const runListModelsCommand = async (args: string[]) => {
     const parsed = parseFlags(args);
     if (!parsed.ok) {
         process.stderr.write(`Unknown flag: ${parsed.flag}\n`);
@@ -198,9 +175,7 @@ export const runListModelsCommand = async (args: string[]): Promise<number> => {
         config = await loadConfig();
         await configureLogging(config.log_level);
     } catch (e) {
-        process.stderr.write(
-            `Error: Failed to load config: ${getErrorMessage(e)}\n`,
-        );
+        process.stderr.write(`Error: Failed to load config: ${getErrorMessage(e)}\n`);
         return 1;
     }
 

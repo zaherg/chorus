@@ -18,7 +18,7 @@ export interface EmbeddedFileResult {
 
 let _allowedRoots: string[] | undefined;
 
-const getAllowedRoots = (): string[] => {
+const getAllowedRoots = () => {
     if (_allowedRoots) return _allowedRoots;
     const cwd = realpathSync(process.cwd());
     const tmp = tmpdir();
@@ -42,7 +42,7 @@ const getAllowedRoots = (): string[] => {
     return _allowedRoots;
 };
 
-const isAllowedPath = (realPath: string): boolean => {
+const isAllowedPath = (realPath: string) => {
     for (const root of getAllowedRoots()) {
         // Use path.relative instead of string-prefix matching for cross-platform
         // safety (Bun on Windows emits `\\` from realpath).
@@ -54,10 +54,7 @@ const isAllowedPath = (realPath: string): boolean => {
     return false;
 };
 
-export const embedFiles = async (
-    paths: string[],
-    _modelContextWindow?: number,
-): Promise<EmbeddedFileResult> => {
+export const embedFiles = async (paths: string[], _modelContextWindow?: number) => {
     const uniquePaths = [...new Set(paths)];
     const embeddedFiles: string[] = [];
     const skippedFiles: string[] = [];
@@ -104,9 +101,7 @@ export const embedFiles = async (
 
         if (stats.size > MAX_EMBEDDED_FILE_BYTES) {
             skippedFiles.push(absPath);
-            logger?.warn(
-                `File skipped (too large): ${absPath} (${stats.size} bytes, max ${MAX_EMBEDDED_FILE_BYTES})`,
-            );
+            logger?.warn(`File skipped (too large): ${absPath} (${stats.size} bytes, max ${MAX_EMBEDDED_FILE_BYTES})`);
             continue;
         }
 
@@ -115,9 +110,7 @@ export const embedFiles = async (
 
         if (totalTokens + tokenCount > maxTokens) {
             skippedFiles.push(absPath);
-            logger?.warn(
-                `File skipped (token budget): ${absPath} (${tokenCount} tokens, budget ${maxTokens})`,
-            );
+            logger?.warn(`File skipped (token budget): ${absPath} (${tokenCount} tokens, budget ${maxTokens})`);
             continue;
         }
 
