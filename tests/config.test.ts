@@ -1,13 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import {
-    chmodSync,
-    mkdirSync,
-    mkdtempSync,
-    readFileSync,
-    rmSync,
-    statSync,
-    writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -45,9 +37,7 @@ describe("loadConfig", () => {
         })();
         const configDir = join(tempDir, ".config", "chorus");
         const configPath = join(configDir, "config.json");
-        const writtenConfig = JSON.parse(
-            readFileSync(configPath, "utf8"),
-        ) as Record<string, unknown>;
+        const writtenConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
 
         expect(config).toMatchObject({
             cli_timeout_ms: 30_000,

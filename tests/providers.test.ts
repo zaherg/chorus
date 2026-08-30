@@ -2,12 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { customProviderBaseUrl } from "@/providers/custom-url";
 import { createProviderRegistry } from "@/providers/registry";
-import {
-    BrokerModelInfoSchema,
-    type ModelsListResponse,
-    type ProviderId,
-    providerIdValues,
-} from "@/types/providers";
+import { BrokerModelInfoSchema, type ModelsListResponse, type ProviderId, providerIdValues } from "@/types/providers";
 import { testConfig } from "./helpers";
 
 const openrouterCatalog = (): ModelsListResponse => {
@@ -30,8 +25,7 @@ const openrouterCatalog = (): ModelsListResponse => {
     };
 };
 
-const openrouterConfigured = (): ReadonlySet<ProviderId> =>
-    new Set<ProviderId>(["openrouter"]);
+const openrouterConfigured = (): ReadonlySet<ProviderId> => new Set<ProviderId>(["openrouter"]);
 
 describe("ProviderRegistry", () => {
     afterEach(() => {});
@@ -50,16 +44,12 @@ describe("ProviderRegistry", () => {
             ];
 
             for (const { input, expected } of cases) {
-                expect(await customProviderBaseUrl(input, false)).toBe(
-                    expected,
-                );
+                expect(await customProviderBaseUrl(input, false)).toBe(expected);
             }
         });
 
         test("still rejects non-loopback insecure custom provider URLs by default", async () => {
-            await expect(
-                customProviderBaseUrl("http://example.com/v1", false),
-            ).rejects.toThrow(
+            await expect(customProviderBaseUrl("http://example.com/v1", false)).rejects.toThrow(
                 "custom_url must use https:// unless allow_insecure_custom is set to true",
             );
         });
@@ -72,9 +62,7 @@ describe("ProviderRegistry", () => {
                 "https://[::ffff:a9fe:a9fe]/v1",
                 "https://[::ffff:c0a8:101]/v1",
             ]) {
-                await expect(customProviderBaseUrl(url, false)).rejects.toThrow(
-                    "custom_url host is not allowed",
-                );
+                await expect(customProviderBaseUrl(url, false)).rejects.toThrow("custom_url host is not allowed");
             }
         });
     });
@@ -88,23 +76,17 @@ describe("ProviderRegistry", () => {
         });
 
         test("returns true for the provider whose API key is set", () => {
-            const registry = createProviderRegistry(
-                testConfig({ azure_api_key: "azure-key" }),
-            );
+            const registry = createProviderRegistry(testConfig({ azure_api_key: "azure-key" }));
             expect(registry.isProviderConfigured("azure")).toBeTrue();
         });
 
         test("returns false for the provider whose API key is not set", () => {
-            const registry = createProviderRegistry(
-                testConfig({ azure_api_key: "azure-key" }),
-            );
+            const registry = createProviderRegistry(testConfig({ azure_api_key: "azure-key" }));
             expect(registry.isProviderConfigured("openrouter")).toBeFalse();
         });
 
         test("returns false when the API key is an unresolved environment variable reference", () => {
-            const registry = createProviderRegistry(
-                testConfig({ openrouter_api_key: "$OPENROUTER_API_KEY" }),
-            );
+            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "$OPENROUTER_API_KEY" }));
             expect(registry.isProviderConfigured("openrouter")).toBeFalse();
         });
 
@@ -122,44 +104,36 @@ describe("ProviderRegistry", () => {
     describe("generateText", () => {
         test("calls the AI SDK through an injected generateText implementation", async () => {
             const calls: Array<Record<string, unknown>> = [];
-            const registry = createProviderRegistry(
-                testConfig({ openrouter_api_key: "openrouter-key" }),
-                {
-                    generateTextFn: async (args) => {
-                        calls.push(args as Record<string, unknown>);
-                        return {
-                            finishReason: "stop",
-                            providerMetadata: undefined,
-                            reasoning: [],
-                            request: {},
-                            response: {
-                                id: "resp_123",
-                                modelId: "openai/gpt-5.2",
-                                timestamp: new Date("2026-03-10T12:00:00.000Z"),
-                            },
-                            steps: [],
-                            text: "hello back",
-                            usage: {
-                                inputTokens: 12,
-                                outputTokens: 4,
-                                totalTokens: 16,
-                            },
-                            warnings: undefined,
-                        } as never;
-                    },
+            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                generateTextFn: async (args) => {
+                    calls.push(args as Record<string, unknown>);
+                    return {
+                        finishReason: "stop",
+                        providerMetadata: undefined,
+                        reasoning: [],
+                        request: {},
+                        response: {
+                            id: "resp_123",
+                            modelId: "openai/gpt-5.2",
+                            timestamp: new Date("2026-03-10T12:00:00.000Z"),
+                        },
+                        steps: [],
+                        text: "hello back",
+                        usage: {
+                            inputTokens: 12,
+                            outputTokens: 4,
+                            totalTokens: 16,
+                        },
+                        warnings: undefined,
+                    } as never;
                 },
-            );
+            });
 
-            const result = await registry.generateText(
-                "openrouter/openai/gpt-5.2",
-                "hello",
-                "system text",
-                {
-                    catalog: openrouterCatalog(),
-                    configuredProviders: openrouterConfigured(),
-                    temperature: 0.2,
-                },
-            );
+            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", "system text", {
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+                temperature: 0.2,
+            });
 
             expect(calls).toHaveLength(1);
             expect(calls[0]).not.toHaveProperty("providerOptions");
@@ -172,31 +146,28 @@ describe("ProviderRegistry", () => {
 
         test("maps thinking modes to OpenRouter reasoning effort", async () => {
             const calls: Array<Record<string, unknown>> = [];
-            const registry = createProviderRegistry(
-                testConfig({ openrouter_api_key: "openrouter-key" }),
-                {
-                    providerFactories: {
-                        openrouter: {
-                            languageModel: (modelId) => ({ modelId }) as never,
-                        },
-                    },
-                    generateTextFn: async (args) => {
-                        calls.push(args as Record<string, unknown>);
-                        return {
-                            response: {
-                                modelId: "openai/gpt-5.2",
-                                timestamp: new Date("2026-08-27T00:00:00.000Z"),
-                            },
-                            text: "response",
-                            usage: {
-                                inputTokens: 1,
-                                outputTokens: 1,
-                                totalTokens: 2,
-                            },
-                        } as never;
+            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                providerFactories: {
+                    openrouter: {
+                        languageModel: (modelId) => ({ modelId }) as never,
                     },
                 },
-            );
+                generateTextFn: async (args) => {
+                    calls.push(args as Record<string, unknown>);
+                    return {
+                        response: {
+                            modelId: "openai/gpt-5.2",
+                            timestamp: new Date("2026-08-27T00:00:00.000Z"),
+                        },
+                        text: "response",
+                        usage: {
+                            inputTokens: 1,
+                            outputTokens: 1,
+                            totalTokens: 2,
+                        },
+                    } as never;
+                },
+            });
 
             const expectedEfforts = [
                 ["minimal", "minimal"],
@@ -207,16 +178,11 @@ describe("ProviderRegistry", () => {
             ] as const;
 
             for (const [thinkingMode] of expectedEfforts) {
-                const result = await registry.generateText(
-                    "openrouter/openai/gpt-5.2",
-                    "hello",
-                    undefined,
-                    {
-                        catalog: openrouterCatalog(),
-                        configuredProviders: openrouterConfigured(),
-                        thinkingMode,
-                    },
-                );
+                const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                    thinkingMode,
+                });
                 expect(result.ok).toBeTrue();
             }
 
@@ -253,15 +219,10 @@ describe("ProviderRegistry", () => {
                 },
             );
 
-            const result = await registry.generateText(
-                "openrouter/openai/gpt-5.2",
-                "hello",
-                undefined,
-                {
-                    catalog: openrouterCatalog(),
-                    configuredProviders: openrouterConfigured(),
-                },
-            );
+            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
 
             expect(result.ok).toBeTrue();
             expect(calls).toHaveLength(1);
@@ -281,30 +242,20 @@ describe("ProviderRegistry", () => {
             ];
 
             for (const { message, name } of cases) {
-                const registry = createProviderRegistry(
-                    testConfig({ openrouter_api_key: "openrouter-key" }),
-                    {
-                        generateTextFn: async () => {
-                            throw new DOMException(message, name);
-                        },
+                const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                    generateTextFn: async () => {
+                        throw new DOMException(message, name);
                     },
-                );
-                const result = await registry.generateText(
-                    "openrouter/openai/gpt-5.2",
-                    "hello",
-                    undefined,
-                    {
-                        catalog: openrouterCatalog(),
-                        configuredProviders: openrouterConfigured(),
-                    },
-                );
+                });
+                const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                });
 
                 expect(result.ok).toBeFalse();
                 if (!result.ok) {
                     expect(result.error.type).toBe("timeout");
-                    expect(result.error.message).toBe(
-                        "Provider request timed out",
-                    );
+                    expect(result.error.message).toBe("Provider request timed out");
                     expect(result.error.retryable).toBeTrue();
                 }
             }
@@ -318,39 +269,25 @@ describe("ProviderRegistry", () => {
             };
 
             try {
-                const registry = createProviderRegistry(
-                    testConfig({ openrouter_api_key: "openrouter-key" }),
-                    {
-                        generateTextFn: async () => {
-                            throw new Error(
-                                "upstream error leaked sk-test-secret-value",
-                            );
-                        },
+                const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                    generateTextFn: async () => {
+                        throw new Error("upstream error leaked sk-test-secret-value");
                     },
-                );
+                });
 
-                const result = await registry.generateText(
-                    "openrouter/openai/gpt-5.2",
-                    "hello",
-                    undefined,
-                    {
-                        catalog: openrouterCatalog(),
-                        configuredProviders: openrouterConfigured(),
-                    },
-                );
+                const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                });
 
                 expect(result.ok).toBeFalse();
                 if (!result.ok) {
-                    expect(result.error.message).toBe(
-                        "Provider request failed",
-                    );
+                    expect(result.error.message).toBe("Provider request failed");
                 }
 
                 const stderr = errors
                     .flat()
-                    .map((arg) =>
-                        arg instanceof Error ? arg.message : String(arg),
-                    )
+                    .map((arg) => (arg instanceof Error ? arg.message : String(arg)))
                     .join("\n");
                 expect(stderr).not.toContain("sk-test-secret-value");
             } finally {
@@ -359,18 +296,11 @@ describe("ProviderRegistry", () => {
         });
 
         test("returns a model_not_found error for unknown models", async () => {
-            const registry = createProviderRegistry(
-                testConfig({ openrouter_api_key: "openrouter-key" }),
-            );
-            const result = await registry.generateText(
-                "nonexistent-model",
-                "hello",
-                undefined,
-                {
-                    catalog: openrouterCatalog(),
-                    configuredProviders: openrouterConfigured(),
-                },
-            );
+            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }));
+            const result = await registry.generateText("nonexistent-model", "hello", undefined, {
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
             expect(result.ok).toBeFalse();
             if (!result.ok) {
                 expect(result.error.type).toBe("not_found");
@@ -379,13 +309,8 @@ describe("ProviderRegistry", () => {
         });
 
         test("returns a not_found error when no catalog is provided", async () => {
-            const registry = createProviderRegistry(
-                testConfig({ openrouter_api_key: "openrouter-key" }),
-            );
-            const result = await registry.generateText(
-                "openrouter/openai/gpt-5.2",
-                "hello",
-            );
+            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }));
+            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello");
             expect(result.ok).toBeFalse();
             if (!result.ok) {
                 expect(result.error.type).toBe("not_found");
@@ -394,21 +319,14 @@ describe("ProviderRegistry", () => {
 
         test("returns a model_not_found error when the provider is not configured", async () => {
             const registry = createProviderRegistry(testConfig());
-            const result = await registry.generateText(
-                "openrouter/openai/gpt-5.2",
-                "hello",
-                undefined,
-                {
-                    catalog: openrouterCatalog(),
-                    configuredProviders: new Set<ProviderId>(),
-                },
-            );
+            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                catalog: openrouterCatalog(),
+                configuredProviders: new Set<ProviderId>(),
+            });
             expect(result.ok).toBeFalse();
             if (!result.ok) {
                 expect(result.error.type).toBe("not_found");
-                expect(result.error.message).toContain(
-                    "openrouter/openai/gpt-5.2",
-                );
+                expect(result.error.message).toContain("openrouter/openai/gpt-5.2");
             }
         });
 
@@ -453,15 +371,10 @@ describe("ProviderRegistry", () => {
                 },
             );
 
-            const result = await registry.generateText(
-                "custom/example-model",
-                "hello",
-                undefined,
-                {
-                    catalog: emptyCatalog(),
-                    configuredProviders: new Set<ProviderId>(["custom"]),
-                },
-            );
+            const result = await registry.generateText("custom/example-model", "hello", undefined, {
+                catalog: emptyCatalog(),
+                configuredProviders: new Set<ProviderId>(["custom"]),
+            });
 
             expect(result.ok).toBeTrue();
             expect(providerModelIds).toEqual(["example-model"]);
@@ -513,15 +426,10 @@ describe("ProviderRegistry", () => {
                 },
             };
 
-            const result = await registry.generateText(
-                "custom/default",
-                "hello",
-                undefined,
-                {
-                    catalog,
-                    configuredProviders: new Set<ProviderId>(["custom"]),
-                },
-            );
+            const result = await registry.generateText("custom/default", "hello", undefined, {
+                catalog,
+                configuredProviders: new Set<ProviderId>(["custom"]),
+            });
 
             expect(result.ok).toBeTrue();
             expect(capturedModel).toBeTruthy();
@@ -534,12 +442,8 @@ describe("ProviderRegistry", () => {
 
     describe("custom provider configuration", () => {
         test("is configured only when both URL and API key are set", () => {
-            const urlOnlyRegistry = createProviderRegistry(
-                testConfig({ custom_url: "https://example.com/v1" }),
-            );
-            const keyOnlyRegistry = createProviderRegistry(
-                testConfig({ custom_api_key: "custom-key" }),
-            );
+            const urlOnlyRegistry = createProviderRegistry(testConfig({ custom_url: "https://example.com/v1" }));
+            const keyOnlyRegistry = createProviderRegistry(testConfig({ custom_api_key: "custom-key" }));
             const completeRegistry = createProviderRegistry(
                 testConfig({
                     custom_api_key: "custom-key",
@@ -573,15 +477,10 @@ describe("ProviderRegistry", () => {
                     custom: { status: "catalog", models: [customModel] },
                 },
             };
-            const result = await registry.generateText(
-                "custom/default",
-                "hello",
-                undefined,
-                {
-                    catalog,
-                    configuredProviders: new Set<ProviderId>(["custom"]),
-                },
-            );
+            const result = await registry.generateText("custom/default", "hello", undefined, {
+                catalog,
+                configuredProviders: new Set<ProviderId>(["custom"]),
+            });
             expect(result.ok).toBeFalse();
             if (!result.ok) {
                 expect(result.error.type).toBe("configuration");

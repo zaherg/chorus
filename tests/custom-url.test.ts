@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-    createSafeCustomFetch,
-    type DnsResolveFn,
-    resolveAndValidateHostname,
-} from "@/providers/custom-url";
+import { createSafeCustomFetch, type DnsResolveFn, resolveAndValidateHostname } from "@/providers/custom-url";
 
 describe("resolveAndValidateHostname", () => {
     test("allows loopback hosts without DNS calls", async () => {
@@ -22,27 +18,25 @@ describe("resolveAndValidateHostname", () => {
         const dns: DnsResolveFn = async () => {
             throw new Error("should not be called");
         };
-        await expect(
-            resolveAndValidateHostname("192.168.1.1", dns),
-        ).rejects.toThrow("custom_url host is not allowed");
+        await expect(resolveAndValidateHostname("192.168.1.1", dns)).rejects.toThrow("custom_url host is not allowed");
     });
 
     test("rejects private IPv4-mapped IPv6 literal", async () => {
         const dns: DnsResolveFn = async () => {
             throw new Error("should not be called");
         };
-        await expect(
-            resolveAndValidateHostname("::ffff:10.0.0.1", dns),
-        ).rejects.toThrow("custom_url host is not allowed");
+        await expect(resolveAndValidateHostname("::ffff:10.0.0.1", dns)).rejects.toThrow(
+            "custom_url host is not allowed",
+        );
     });
 
     test("rejects public hostname resolving to private IP", async () => {
         const dns: DnsResolveFn = async () => {
             return ["10.0.0.5"];
         };
-        await expect(
-            resolveAndValidateHostname("evil.internal-proxy.com", dns),
-        ).rejects.toThrow("custom_url host is not allowed");
+        await expect(resolveAndValidateHostname("evil.internal-proxy.com", dns)).rejects.toThrow(
+            "custom_url host is not allowed",
+        );
     });
 
     test("allows public hostname resolving to public IPs", async () => {
@@ -57,9 +51,9 @@ describe("resolveAndValidateHostname", () => {
         const dns: DnsResolveFn = async () => {
             return [];
         };
-        await expect(
-            resolveAndValidateHostname("unknown.example.com", dns),
-        ).rejects.toThrow("custom_url host is not allowed");
+        await expect(resolveAndValidateHostname("unknown.example.com", dns)).rejects.toThrow(
+            "custom_url host is not allowed",
+        );
     });
 });
 
@@ -111,9 +105,7 @@ describe("createSafeCustomFetch", () => {
         );
 
         try {
-            await expect(
-                safeFetch("https://evil.internal/test"),
-            ).rejects.toThrow("custom_url host is not allowed");
+            await expect(safeFetch("https://evil.internal/test")).rejects.toThrow("custom_url host is not allowed");
             expect(fetchCalled).toBeFalse();
         } finally {
             globalThis.fetch = origFetch;
@@ -129,10 +121,7 @@ describe("createSafeCustomFetch", () => {
         let redirectMode: string | undefined;
         const origFetch = globalThis.fetch;
         globalThis.fetch = Object.assign(
-            async (
-                _input: Parameters<typeof fetch>[0],
-                init: Parameters<typeof fetch>[1],
-            ) => {
+            async (_input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
                 redirectMode = init?.redirect;
                 return new Response(null, {
                     status: 302,
@@ -143,9 +132,9 @@ describe("createSafeCustomFetch", () => {
         );
 
         try {
-            await expect(
-                safeFetch("https://example.com/start"),
-            ).rejects.toThrow("custom_url redirects are not allowed");
+            await expect(safeFetch("https://example.com/start")).rejects.toThrow(
+                "custom_url redirects are not allowed",
+            );
             expect(redirectMode).toBe("manual");
         } finally {
             globalThis.fetch = origFetch;

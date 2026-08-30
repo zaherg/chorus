@@ -16,30 +16,22 @@ import {
     writeCache,
 } from "@/providers/model-catalog";
 import { ProviderCatalogSchema } from "@/types/providers";
-import fixture from "./fixtures/models-dev-catalog.fixture.json" with {
-    type: "json",
-};
+import fixture from "./fixtures/models-dev-catalog.fixture.json" with { type: "json" };
 
 // === Fixtures and helpers ===
 
 const noopReader: FileReader = () => ({ ok: false, code: "missing" });
 
-const okJsonResponse = (
-    body: unknown,
-    init: { status?: number; contentType?: string | null } = {},
-): Response => {
+const okJsonResponse = (body: unknown, init: { status?: number; contentType?: string | null } = {}): Response => {
     const status = init.status ?? 200;
     const headers = new Headers();
     if (init.contentType !== null) {
         headers.set("content-type", init.contentType ?? "application/json");
     }
-    return new Response(
-        typeof body === "string" ? body : JSON.stringify(body),
-        {
-            status,
-            headers,
-        },
-    );
+    return new Response(typeof body === "string" ? body : JSON.stringify(body), {
+        status,
+        headers,
+    });
 };
 
 const makeFetch = (
@@ -65,9 +57,7 @@ const makeFetch = (
     return { fn, calls };
 };
 
-const makeReader = (
-    files: Record<string, string | { code: "missing" | "io_error" }>,
-): FileReader => {
+const makeReader = (files: Record<string, string | { code: "missing" | "io_error" }>): FileReader => {
     return (path) => {
         const value = files[path];
         if (value === undefined) {
@@ -113,10 +103,7 @@ describe("model-catalog", () => {
     describe("fetchCatalog", () => {
         test("returns success and validates the catalog on a valid 2xx JSON response", async () => {
             const { fn, calls } = makeFetch(okJsonResponse(fixture));
-            const result = await fetchCatalog(
-                fn,
-                () => new Date("2026-02-01T00:00:00Z"),
-            );
+            const result = await fetchCatalog(fn, () => new Date("2026-02-01T00:00:00Z"));
             expect(calls).toHaveLength(1);
             expect(calls[0]?.url).toBe(MODELS_DEV_CATALOG_URL);
             if (!result.ok) {
@@ -138,9 +125,7 @@ describe("model-catalog", () => {
         });
 
         test("returns { ok: false, code: 'http_status' } on a 4xx response", async () => {
-            const { fn } = makeFetch(
-                okJsonResponse({ error: "x" }, { status: 404 }),
-            );
+            const { fn } = makeFetch(okJsonResponse({ error: "x" }, { status: 404 }));
             const result = await fetchCatalog(fn);
             expect(result.ok).toBe(false);
             if (result.ok) return;
@@ -149,9 +134,7 @@ describe("model-catalog", () => {
         });
 
         test("returns { ok: false, code: 'content_type' } when content-type is text/html", async () => {
-            const { fn } = makeFetch(
-                okJsonResponse({}, { contentType: "text/html" }),
-            );
+            const { fn } = makeFetch(okJsonResponse({}, { contentType: "text/html" }));
             const result = await fetchCatalog(fn);
             expect(result.ok).toBe(false);
             if (result.ok) return;
@@ -229,10 +212,7 @@ describe("model-catalog", () => {
     describe("writeCache", () => {
         test("writes both files and applies mode 0o600", () => {
             const { writer, calls } = makeWriter();
-            const metadata = freshMetadata(
-                "2026-01-01T00:00:00.000Z",
-                "2026-01-02T00:00:00.000Z",
-            );
+            const metadata = freshMetadata("2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z");
             const result = writeCache(writer, fixture, metadata);
             expect(result.ok).toBe(true);
             const catalogPath = CATALOG_RELATIVE_PATH;
@@ -248,9 +228,7 @@ describe("model-catalog", () => {
 
     describe("normalizeProviderModels", () => {
         test("produces executable route_id values and copies capability fields when present", () => {
-            const openrouterRaw = (
-                fixture as { providers: { openrouter: unknown } }
-            ).providers.openrouter;
+            const openrouterRaw = (fixture as { providers: { openrouter: unknown } }).providers.openrouter;
             const providerCatalog = ProviderCatalogSchema.parse(openrouterRaw);
             const models = normalizeProviderModels(
                 "openrouter",
@@ -258,22 +236,16 @@ describe("model-catalog", () => {
                 providerCatalog,
                 (fixture as { models: Record<string, unknown> }).models,
             );
-            const claude = models.find(
-                (m) => m.provider_model_id === "anthropic/claude-sonnet-4.5",
-            );
+            const claude = models.find((m) => m.provider_model_id === "anthropic/claude-sonnet-4.5");
             expect(claude).toBeDefined();
-            expect(claude?.route_id).toBe(
-                "openrouter/anthropic/claude-sonnet-4.5",
-            );
+            expect(claude?.route_id).toBe("openrouter/anthropic/claude-sonnet-4.5");
             expect(claude?.display_name).toBe("Claude Sonnet 4.5 (OpenRouter)");
             expect(claude?.context_window).toBe(200000);
             expect(claude?.output_limit).toBe(8192);
             expect(claude?.supports_reasoning).toBe(true);
             expect(claude?.supports_tools).toBe(true);
             expect(claude?.supports_structured_output).toBe(false);
-            expect(claude?.canonical_model_id).toBe(
-                "openrouter/anthropic/claude-sonnet-4.5",
-            );
+            expect(claude?.canonical_model_id).toBe("openrouter/anthropic/claude-sonnet-4.5");
         });
 
         test("omits optional capability fields when absent in the catalog entry", () => {
@@ -282,12 +254,7 @@ describe("model-catalog", () => {
                     "no-caps": { name: "Bare" },
                 },
             });
-            const models = normalizeProviderModels(
-                "openrouter",
-                "openrouter",
-                providerCatalog,
-                {},
-            );
+            const models = normalizeProviderModels("openrouter", "openrouter", providerCatalog, {});
             expect(models).toHaveLength(1);
             const m = models[0];
             if (!m) throw new Error("expected a model");
@@ -323,12 +290,7 @@ describe("model-catalog", () => {
                     provider: "anthropic",
                 },
             };
-            const models = normalizeProviderModels(
-                "openrouter",
-                "openrouter",
-                providerCatalog,
-                canonicalModels,
-            );
+            const models = normalizeProviderModels("openrouter", "openrouter", providerCatalog, canonicalModels);
             expect(models).toHaveLength(1);
             expect(models[0]?.canonical_model_id).toBeUndefined();
         });
@@ -338,10 +300,7 @@ describe("model-catalog", () => {
         const now = () => new Date("2026-06-01T00:00:00Z");
 
         test("with fresh cache skips the network", async () => {
-            const metadata = freshMetadata(
-                "2026-05-01T00:00:00.000Z",
-                "2027-01-01T00:00:00.000Z",
-            );
+            const metadata = freshMetadata("2026-05-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z");
             const reader = makeReader({
                 [METADATA_RELATIVE_PATH]: JSON.stringify(metadata),
                 [CATALOG_RELATIVE_PATH]: JSON.stringify(fixture),
@@ -363,10 +322,7 @@ describe("model-catalog", () => {
         });
 
         test("with expired cache triggers a fetch and writes new metadata", async () => {
-            const stale = freshMetadata(
-                "2025-01-01T00:00:00.000Z",
-                "2025-06-01T00:00:00.000Z",
-            );
+            const stale = freshMetadata("2025-01-01T00:00:00.000Z", "2025-06-01T00:00:00.000Z");
             const reader = makeReader({
                 [METADATA_RELATIVE_PATH]: JSON.stringify(stale),
                 [CATALOG_RELATIVE_PATH]: JSON.stringify(fixture),
@@ -410,10 +366,7 @@ describe("model-catalog", () => {
         });
 
         test("with stale cache and fetch failure returns stale catalog with warning", async () => {
-            const stale = freshMetadata(
-                "2025-01-01T00:00:00.000Z",
-                "2025-06-01T00:00:00.000Z",
-            );
+            const stale = freshMetadata("2025-01-01T00:00:00.000Z", "2025-06-01T00:00:00.000Z");
             const reader = makeReader({
                 [METADATA_RELATIVE_PATH]: JSON.stringify(stale),
                 [CATALOG_RELATIVE_PATH]: JSON.stringify(fixture),
@@ -436,10 +389,7 @@ describe("model-catalog", () => {
         });
 
         test("with forceRefresh: true bypasses fresh-cache short-circuit and uses the fetched catalog", async () => {
-            const stale = freshMetadata(
-                "2025-01-01T00:00:00.000Z",
-                "2027-01-01T00:00:00.000Z",
-            );
+            const stale = freshMetadata("2025-01-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z");
             const reader = makeReader({
                 [METADATA_RELATIVE_PATH]: JSON.stringify(stale),
                 [CATALOG_RELATIVE_PATH]: JSON.stringify(fixture),

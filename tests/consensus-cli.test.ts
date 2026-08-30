@@ -3,11 +3,7 @@ import { Readable } from "node:stream";
 
 import { runCli } from "@/cli";
 import { runConsensusCommand } from "@/commands/consensus";
-import {
-    BrokerModelInfoSchema,
-    type ModelsListResponse,
-    type ProviderListEntry,
-} from "@/types/providers";
+import { BrokerModelInfoSchema, type ModelsListResponse, type ProviderListEntry } from "@/types/providers";
 import { captureOutput, testConfig } from "./helpers";
 
 mock.module("@/config", () => ({
@@ -96,9 +92,7 @@ const stubConfiguredProviders = (configured: string[]): void => {
     }));
 };
 
-const stubRunConsensus = (
-    impl: (request: unknown) => Promise<unknown>,
-): void => {
+const stubRunConsensus = (impl: (request: unknown) => Promise<unknown>): void => {
     mock.module("@/consensus", () => ({
         runConsensus: impl,
     }));
@@ -162,27 +156,17 @@ describe("runConsensusCommand", () => {
         const cases: Array<{ args: string[]; checkStderr?: string }> = [
             { args: ["--prompt", "test"] },
             {
-                args: [
-                    "--models",
-                    "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
-                ],
+                args: ["--models", "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro"],
             },
             { args: ["--models", ",,", "--prompt", "test"] },
             {
-                args: [
-                    "--models",
-                    "openrouter/openai/gpt-5.2",
-                    "--prompt",
-                    "test",
-                ],
+                args: ["--models", "openrouter/openai/gpt-5.2", "--prompt", "test"],
                 checkStderr: "at least two models",
             },
         ];
         for (const { args, checkStderr } of cases) {
             stubDefaults();
-            const { result, stderr } = await captureOutput(() =>
-                runConsensusCommand(args),
-            );
+            const { result, stderr } = await captureOutput(() => runConsensusCommand(args));
             expect(result).toBe(2);
             if (checkStderr) expect(stderr).toContain(checkStderr);
         }
@@ -190,9 +174,7 @@ describe("runConsensusCommand", () => {
 
     it("prints schema JSON with --schema flag", async () => {
         stubDefaults();
-        const { result, stdout } = await captureOutput(() =>
-            runConsensusCommand(["--schema"]),
-        );
+        const { result, stdout } = await captureOutput(() => runConsensusCommand(["--schema"]));
         expect(result).toBe(0);
         const parsed = JSON.parse(stdout.trim());
         expect(parsed.schema).toBe("cli.consensus/2");
@@ -247,10 +229,7 @@ describe("runConsensusCommand", () => {
 
         for (const { input, expectedStderr } of cases) {
             stubDefaults();
-            const { result, stderr } = await mockStdin(
-                () => runConsensusCommand(["--stdin-json"]),
-                input,
-            );
+            const { result, stderr } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), input);
             expect(result).toBe(2);
             if (expectedStderr) {
                 expect(stderr).toContain(expectedStderr);
@@ -273,20 +252,14 @@ describe("runConsensusCommand", () => {
                     code: "ambiguous_model" as const,
                     input: "shared",
                     candidates: ["anthropic/shared", "azure/shared"],
-                    message:
-                        "Model 'shared' is exposed by multiple configured providers.",
+                    message: "Model 'shared' is exposed by multiple configured providers.",
                 },
             }),
         }));
         stubRunConsensus(defaultConsensusImpl);
 
         const { result, stdout } = await captureOutput(() =>
-            runConsensusCommand([
-                "--models",
-                "shared,openrouter/openai/gpt-5.2",
-                "--prompt",
-                "test",
-            ]),
+            runConsensusCommand(["--models", "shared,openrouter/openai/gpt-5.2", "--prompt", "test"]),
         );
 
         expect(result).toBe(3);
@@ -320,12 +293,7 @@ describe("runConsensusCommand", () => {
         stubRunConsensus(defaultConsensusImpl);
 
         const { result, stdout } = await captureOutput(() =>
-            runConsensusCommand([
-                "--models",
-                "missing,openrouter/openai/gpt-5.2",
-                "--prompt",
-                "test",
-            ]),
+            runConsensusCommand(["--models", "missing,openrouter/openai/gpt-5.2", "--prompt", "test"]),
         );
 
         expect(result).toBe(3);
@@ -345,15 +313,8 @@ describe("runConsensusCommand", () => {
                 input.includes("/")
                     ? { kind: "exact_route_id" as const, route_id: input }
                     : { kind: "unqualified" as const, providerModelId: input },
-            resolveRoute: async (input: {
-                kind: string;
-                route_id?: string;
-                providerModelId?: string;
-            }) => {
-                const id =
-                    input.kind === "exact_route_id"
-                        ? input.route_id
-                        : input.providerModelId;
+            resolveRoute: async (input: { kind: string; route_id?: string; providerModelId?: string }) => {
+                const id = input.kind === "exact_route_id" ? input.route_id : input.providerModelId;
                 if (id === "synth-missing") {
                     return {
                         ok: false as const,
@@ -460,9 +421,7 @@ describe("runConsensusCommand", () => {
 describe("runCli", () => {
     it("help text does not claim auto-picked synthesis model", async () => {
         stubDefaults();
-        const { result, stdout } = await captureOutput(() =>
-            runCli(["--help"]),
-        );
+        const { result, stdout } = await captureOutput(() => runCli(["--help"]));
         expect(result).toBe(0);
         expect(stdout).not.toContain("auto-picked");
         expect(stdout).toContain("skipped when absent");

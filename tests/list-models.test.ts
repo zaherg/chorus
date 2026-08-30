@@ -1,11 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 
 import { runListModelsCommand } from "@/commands/list-models";
-import {
-    BrokerModelInfoSchema,
-    type ModelsListResponse,
-    type ProviderListEntry,
-} from "@/types/providers";
+import { BrokerModelInfoSchema, type ModelsListResponse, type ProviderListEntry } from "@/types/providers";
 import { captureOutput, testConfig } from "./helpers";
 
 mock.module("@/config", () => ({
@@ -94,9 +90,7 @@ describe("runListModelsCommand", () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
         stubConfiguredProviders(["anthropic", "openrouter"]);
 
-        const { result, stdout } = await captureOutput(() =>
-            runListModelsCommand(["--json"]),
-        );
+        const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json"]));
         expect(result).toBe(0);
 
         const payload = JSON.parse(stdout);
@@ -104,24 +98,17 @@ describe("runListModelsCommand", () => {
         expect(payload.cache.status).toBe("fresh");
         expect(typeof payload.cache.fetched_at).toBe("string");
         expect(typeof payload.cache.expires_at).toBe("string");
-        expect(Object.keys(payload.providers).sort()).toEqual([
-            "anthropic",
-            "openrouter",
-        ]);
+        expect(Object.keys(payload.providers).sort()).toEqual(["anthropic", "openrouter"]);
         expect(payload.providers.anthropic.status).toBe("catalog");
         expect(payload.providers.anthropic.models).toHaveLength(1);
-        expect(payload.providers.openrouter.models[0].route_id).toBe(
-            "openrouter/openai/gpt-5.2",
-        );
+        expect(payload.providers.openrouter.models[0].route_id).toBe("openrouter/openai/gpt-5.2");
     });
 
     it("emits passthrough providers with status passthrough and empty models", async () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
         stubConfiguredProviders(["custom"]);
 
-        const { result, stdout } = await captureOutput(() =>
-            runListModelsCommand(["--json"]),
-        );
+        const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json"]));
         expect(result).toBe(0);
 
         const payload = JSON.parse(stdout);
@@ -143,9 +130,7 @@ describe("runListModelsCommand", () => {
         }));
         stubConfiguredProviders([]);
 
-        const { result, stdout } = await captureOutput(() =>
-            runListModelsCommand(["--json"]),
-        );
+        const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json"]));
         expect(result).toBe(1);
 
         const payload = JSON.parse(stdout);
@@ -165,9 +150,7 @@ describe("runListModelsCommand", () => {
         // --refresh set -> forceRefresh: true
         {
             const { calls } = stubLoadCatalog(response);
-            const { result } = await captureOutput(() =>
-                runListModelsCommand(["--json", "--refresh"]),
-            );
+            const { result } = await captureOutput(() => runListModelsCommand(["--json", "--refresh"]));
             expect(result).toBe(0);
             expect(calls[0]?.forceRefresh).toBe(true);
         }
@@ -175,9 +158,7 @@ describe("runListModelsCommand", () => {
         // --refresh absent -> forceRefresh: false
         {
             const { calls } = stubLoadCatalog(response);
-            const { result } = await captureOutput(() =>
-                runListModelsCommand(["--json"]),
-            );
+            const { result } = await captureOutput(() => runListModelsCommand(["--json"]));
             expect(result).toBe(0);
             expect(calls[0]?.forceRefresh).toBe(false);
         }
@@ -187,9 +168,7 @@ describe("runListModelsCommand", () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
         stubConfiguredProviders(["anthropic", "openrouter"]);
 
-        const { result, stdout } = await captureOutput(() =>
-            runListModelsCommand([]),
-        );
+        const { result, stdout } = await captureOutput(() => runListModelsCommand([]));
         expect(result).toBe(0);
 
         expect(stdout).toContain("anthropic");
@@ -199,9 +178,7 @@ describe("runListModelsCommand", () => {
     });
 
     it("returns 2 and prints an unknown-flag error for unrecognized flags", async () => {
-        const { result, stderr } = await captureOutput(() =>
-            runListModelsCommand(["--bogus"]),
-        );
+        const { result, stderr } = await captureOutput(() => runListModelsCommand(["--bogus"]));
         expect(result).toBe(2);
         expect(stderr).toContain("Unknown flag: --bogus");
     });
@@ -214,9 +191,7 @@ describe("runListModelsCommand", () => {
         }));
         stubConfiguredProviders([]);
 
-        const { result, stderr } = await captureOutput(() =>
-            runListModelsCommand(["--json"]),
-        );
+        const { result, stderr } = await captureOutput(() => runListModelsCommand(["--json"]));
         expect(result).toBe(1);
         expect(stderr).toContain("Error");
         expect(stderr).toContain("boom");
@@ -240,9 +215,7 @@ describe("runListModelsCommand", () => {
         }));
         stubConfiguredProviders([]);
 
-        const { result, stderr } = await captureOutput(() =>
-            runListModelsCommand([]),
-        );
+        const { result, stderr } = await captureOutput(() => runListModelsCommand([]));
         expect(result).toBe(1);
         expect(stderr).toContain("Error");
         expect(stderr).toContain("no cache and network failed");
@@ -252,9 +225,7 @@ describe("runListModelsCommand", () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
         stubConfiguredProviders(["anthropic", "openrouter"]);
 
-        const { result, stdout } = await captureOutput(() =>
-            runListModelsCommand(["--json", "Kimi"]),
-        );
+        const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json", "Kimi"]));
         expect(result).toBe(0);
 
         const payload = JSON.parse(stdout);
@@ -278,16 +249,12 @@ describe("runListModelsCommand", () => {
         stubLoadCatalog(buildResponse(providers));
         stubConfiguredProviders(["openrouter", "anthropic"]);
 
-        const { result, stdout } = await captureOutput(() =>
-            runListModelsCommand(["--json", "kimi"]),
-        );
+        const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json", "kimi"]));
         expect(result).toBe(0);
 
         const payload = JSON.parse(stdout);
         expect(payload.providers.openrouter.models).toHaveLength(1);
-        expect(payload.providers.openrouter.models[0].route_id).toBe(
-            "openrouter/moonshotai/kimi-k2",
-        );
+        expect(payload.providers.openrouter.models[0].route_id).toBe("openrouter/moonshotai/kimi-k2");
         expect(payload.providers.anthropic.models).toEqual([]);
     });
 
@@ -306,9 +273,7 @@ describe("runListModelsCommand", () => {
         stubLoadCatalog(buildResponse(providers));
         stubConfiguredProviders(["openrouter", "anthropic"]);
 
-        const { result, stdout } = await captureOutput(() =>
-            runListModelsCommand(["kimi"]),
-        );
+        const { result, stdout } = await captureOutput(() => runListModelsCommand(["kimi"]));
         expect(result).toBe(0);
 
         expect(stdout).toContain("openrouter/moonshotai/kimi-k2");
@@ -318,9 +283,7 @@ describe("runListModelsCommand", () => {
 
     it("rejects a second positional argument with exit code 2", async () => {
         stubConfiguredProviders([]);
-        const { result, stderr } = await captureOutput(() =>
-            runListModelsCommand(["kimi", "extra"]),
-        );
+        const { result, stderr } = await captureOutput(() => runListModelsCommand(["kimi", "extra"]));
         expect(result).toBe(2);
         expect(stderr).toContain("Unknown flag: extra");
     });

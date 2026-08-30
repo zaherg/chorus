@@ -1,45 +1,25 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import {
-    chmod,
-    cp,
-    mkdir,
-    readFile,
-    rm,
-    stat,
-    writeFile,
-} from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const repoRoot = new URL("..", import.meta.url).pathname;
-const installerPath = join(
-    repoRoot,
-    "skills",
-    "consensus",
-    "scripts",
-    "install.sh",
-);
+const installerPath = join(repoRoot, "skills", "consensus", "scripts", "install.sh");
 const tempDirs: string[] = [];
 
 afterEach(async () => {
-    await Promise.all(
-        tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
-    );
+    await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
     tempDirs.length = 0;
 });
 
 const tempDir = async (name: string): Promise<string> => {
-    const dir =
-        await Bun.$`mktemp -d ${join(tmpdir(), `${name}.XXXXXX`)}`.text();
+    const dir = await Bun.$`mktemp -d ${join(tmpdir(), `${name}.XXXXXX`)}`.text();
     const trimmed = dir.trim();
     tempDirs.push(trimmed);
     return trimmed;
 };
 
-const writeExecutable = async (
-    path: string,
-    content: string,
-): Promise<void> => {
+const writeExecutable = async (path: string, content: string): Promise<void> => {
     await writeFile(path, content);
     await chmod(path, 0o755);
 };
@@ -66,13 +46,9 @@ const createTooling = async ({
     const binDir = await tempDir("chorus-tools");
     const logPath = join(binDir, "calls.log");
     const binaryBody = "released binary\n";
-    const digest = new Bun.CryptoHasher("sha256")
-        .update(binaryBody)
-        .digest("hex");
+    const digest = new Bun.CryptoHasher("sha256").update(binaryBody).digest("hex");
     const checksumValue =
-        checksum === "valid"
-            ? digest
-            : "0000000000000000000000000000000000000000000000000000000000000000";
+        checksum === "valid" ? digest : "0000000000000000000000000000000000000000000000000000000000000000";
 
     await writeExecutable(
         join(binDir, "uname"),
@@ -169,13 +145,9 @@ describe("skill-local installer", () => {
         expect((await stat(installedPath)).mode & 0o111).toBeGreaterThan(0);
         const log = await readFile(logPath, "utf8");
         expect(log).toContain("consensus-darwin-arm64");
-        const xattrCalls = log
-            .split("\n")
-            .filter((line) => line.startsWith("xattr "));
+        const xattrCalls = log.split("\n").filter((line) => line.startsWith("xattr "));
         expect(xattrCalls).toEqual([
-            expect.stringMatching(
-                /xattr -d com\.apple\.quarantine .+\/consensus-darwin-arm64$/,
-            ),
+            expect.stringMatching(/xattr -d com\.apple\.quarantine .+\/consensus-darwin-arm64$/),
             `xattr -d com.apple.quarantine ${installedPath}.tmp`,
             `xattr -d com.apple.quarantine ${installedPath}`,
         ]);
@@ -189,9 +161,7 @@ describe("skill-local installer", () => {
 
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("checksum");
-        await expect(
-            stat(join(skillDir, "bin", "consensus")),
-        ).rejects.toThrow();
+        await expect(stat(join(skillDir, "bin", "consensus"))).rejects.toThrow();
     });
 
     it("supports --prefix and --no-verify without downloading checksums", async () => {
@@ -199,19 +169,11 @@ describe("skill-local installer", () => {
         const prefix = await tempDir("chorus-prefix");
         const { binDir, logPath } = await createTooling();
 
-        const result = await runInstaller(skillDir, binDir, [
-            "--prefix",
-            prefix,
-            "--no-verify",
-        ]);
+        const result = await runInstaller(skillDir, binDir, ["--prefix", prefix, "--no-verify"]);
 
         expect(result.exitCode).toBe(0);
-        expect(await readFile(join(prefix, "consensus"), "utf8")).toBe(
-            "released binary\n",
-        );
-        expect(await readFile(logPath, "utf8")).not.toContain(
-            "checksums.sha256",
-        );
+        expect(await readFile(join(prefix, "consensus"), "utf8")).toBe("released binary\n");
+        expect(await readFile(logPath, "utf8")).not.toContain("checksums.sha256");
     });
 
     it("fails clearly for unsupported platforms", async () => {

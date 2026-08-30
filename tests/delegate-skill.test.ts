@@ -102,19 +102,12 @@ function assertNoUnquotedShellExecution(command: string): void {
 
         if (quote === "'") continue;
 
-        if (
-            character === "`" ||
-            (character === "$" && command[index + 1] === "(")
-        ) {
-            throw new Error(
-                `Command substitution is not allowed in: ${command}`,
-            );
+        if (character === "`" || (character === "$" && command[index + 1] === "(")) {
+            throw new Error(`Command substitution is not allowed in: ${command}`);
         }
 
         if (quote === null && /[;|&<>()]/.test(character)) {
-            throw new Error(
-                `Unquoted shell operator is not allowed in: ${command}`,
-            );
+            throw new Error(`Unquoted shell operator is not allowed in: ${command}`);
         }
     }
 }
@@ -177,10 +170,7 @@ function shellTokens(command: string): string[] {
     return tokens;
 }
 
-function parseCommandOptions(
-    tokens: string[],
-    startIndex: number,
-): ParsedCommand {
+function parseCommandOptions(tokens: string[], startIndex: number): ParsedCommand {
     const options = new Map<string, Array<string | null>>();
     const positionals: string[] = [];
 
@@ -232,14 +222,9 @@ function expectExactOptions(
     positionalCount: number,
 ): ParsedCommand {
     const parsed = parseCommandOptions(invocation.tokens, startIndex);
-    expect([...parsed.options.keys()].sort()).toEqual(
-        [...expected.keys()].sort(),
-    );
+    expect([...parsed.options.keys()].sort()).toEqual([...expected.keys()].sort());
     for (const [name, value] of expected) {
-        expect(
-            parsed.options.get(name),
-            `Unexpected values for ${name}`,
-        ).toEqual([value]);
+        expect(parsed.options.get(name), `Unexpected values for ${name}`).toEqual([value]);
     }
     expect(parsed.positionals).toHaveLength(positionalCount);
     return parsed;
@@ -277,21 +262,13 @@ function concretePiModelAssignments(section: string): string[] {
     for (const assignment of section.matchAll(assignmentPattern)) {
         const rhs = assignment[1] ?? assignment[3] ?? "";
         const singleQuoted = assignment[2] === "'" || /^'[^']*'$/.test(rhs);
-        const hasExpansion =
-            !singleQuoted &&
-            /\$(?:\{[^}]+\}|[A-Za-z_0-9][A-Za-z0-9_]*)/.test(rhs);
+        const hasExpansion = !singleQuoted && /\$(?:\{[^}]+\}|[A-Za-z_0-9][A-Za-z0-9_]*)/.test(rhs);
         const literal = rhs.replace(/^(['"])(.*)\1$/, "$2");
         const hasProviderRoute = providerRoute.test(rhs);
         const hasLiteralFallback = [...rhs.matchAll(parameterFallback)].some(
-            (match) =>
-                match[1]
-                    .replace(/\$(?:\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)/g, "")
-                    .match(/[A-Za-z0-9]/) !== null,
+            (match) => match[1].replace(/\$(?:\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)/g, "").match(/[A-Za-z0-9]/) !== null,
         );
-        if (
-            literal.length > 0 &&
-            (!hasExpansion || hasProviderRoute || hasLiteralFallback)
-        ) {
+        if (literal.length > 0 && (!hasExpansion || hasProviderRoute || hasLiteralFallback)) {
             concrete.push(assignment[0].trim());
         }
     }
@@ -305,9 +282,7 @@ function positiveProviderDefaultLines(section: string): string[] {
         .split(/\r?\n/)
         .filter(
             (line) =>
-                /\bdefault\b/i.test(line) &&
-                providerRoute.test(line) &&
-                !/\b(?:never|do not|must not)\b/i.test(line),
+                /\bdefault\b/i.test(line) && providerRoute.test(line) && !/\b(?:never|do not|must not)\b/i.test(line),
         );
 }
 
@@ -319,79 +294,30 @@ describe("delegate skill command parser", () => {
                 '/opt/homebrew/bin/pi --print --no-session "Review"',
                 "Wrapped or compound Pi invocation",
             ],
-            [
-                "variable executable path",
-                '$PI_BIN --print --no-session "Review"',
-                "Wrapped or compound Pi invocation",
-            ],
-            [
-                "env wrapper",
-                'env MODE=review pi --print --no-session "Review"',
-                "Wrapped or compound Pi invocation",
-            ],
-            [
-                "shell wrapper",
-                "sh -c 'pi --print --no-session \"Review\"'",
-                "Wrapped or compound Pi invocation",
-            ],
-            [
-                "sudo wrapper",
-                'sudo -u root pi --print --no-session "Review"',
-                "Wrapped or compound Pi invocation",
-            ],
-            [
-                "xargs wrapper",
-                'xargs pi --print --no-session "Review"',
-                "Wrapped or compound Pi invocation",
-            ],
-            [
-                "eval wrapper",
-                'eval "pi --print --no-session Review"',
-                "Wrapped or compound Pi invocation",
-            ],
-            [
-                "nohup wrapper",
-                "nohup sh -c 'pi --print --no-session \"Review\"'",
-                "Wrapped or compound Pi invocation",
-            ],
-            [
-                "semicolon",
-                'pi --print --no-session "Review"; echo done',
-                "Unquoted shell operator",
-            ],
-            [
-                "pipe",
-                'pi --print --no-session "Review" | tee review.log',
-                "Unquoted shell operator",
-            ],
-            [
-                "redirection",
-                'pi --print --no-session "Review" > review.log',
-                "Unquoted shell operator",
-            ],
-            [
-                "backgrounding",
-                'pi --print --no-session "Review" &',
-                "Unquoted shell operator",
-            ],
+            ["variable executable path", '$PI_BIN --print --no-session "Review"', "Wrapped or compound Pi invocation"],
+            ["env wrapper", 'env MODE=review pi --print --no-session "Review"', "Wrapped or compound Pi invocation"],
+            ["shell wrapper", "sh -c 'pi --print --no-session \"Review\"'", "Wrapped or compound Pi invocation"],
+            ["sudo wrapper", 'sudo -u root pi --print --no-session "Review"', "Wrapped or compound Pi invocation"],
+            ["xargs wrapper", 'xargs pi --print --no-session "Review"', "Wrapped or compound Pi invocation"],
+            ["eval wrapper", 'eval "pi --print --no-session Review"', "Wrapped or compound Pi invocation"],
+            ["nohup wrapper", "nohup sh -c 'pi --print --no-session \"Review\"'", "Wrapped or compound Pi invocation"],
+            ["semicolon", 'pi --print --no-session "Review"; echo done', "Unquoted shell operator"],
+            ["pipe", 'pi --print --no-session "Review" | tee review.log', "Unquoted shell operator"],
+            ["redirection", 'pi --print --no-session "Review" > review.log', "Unquoted shell operator"],
+            ["backgrounding", 'pi --print --no-session "Review" &', "Unquoted shell operator"],
         ];
 
         for (const [, command, error] of unsafeCases) {
-            expect(() =>
-                piInvocations(["```zsh", command, "```"].join("\n")),
-            ).toThrow(error);
+            expect(() => piInvocations(["```zsh", command, "```"].join("\n"))).toThrow(error);
         }
     });
 });
 
 function piInvocations(section: string): PiInvocation[] {
     const result: PiInvocation[] = [];
-    const isAssignment = (token: string): boolean =>
-        /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
+    const isAssignment = (token: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
     const isPiExecutable = (token: string): boolean =>
-        token === "pi" ||
-        /(?:^|\/)pi$/.test(token) ||
-        /^\$\{?PI(?:_[A-Z0-9_]*)?\}?$/.test(token);
+        token === "pi" || /(?:^|\/)pi$/.test(token) || /^\$\{?PI(?:_[A-Z0-9_]*)?\}?$/.test(token);
 
     const findPiCommand = (tokens: string[], startIndex = 0): number => {
         let index = startIndex;
@@ -403,12 +329,9 @@ function piInvocations(section: string): PiInvocation[] {
 
         if (["bash", "sh", "zsh"].includes(executable)) {
             const commandIndex = tokens.indexOf("-c", index + 1);
-            const command =
-                commandIndex === -1 ? undefined : tokens[commandIndex + 1];
+            const command = commandIndex === -1 ? undefined : tokens[commandIndex + 1];
             if (command === undefined) return -1;
-            return findPiCommand(shellTokens(command)) === -1
-                ? -1
-                : commandIndex + 1;
+            return findPiCommand(shellTokens(command)) === -1 ? -1 : commandIndex + 1;
         }
 
         if (executable === "eval") {
@@ -424,10 +347,7 @@ function piInvocations(section: string): PiInvocation[] {
 
         if (executable === "env") {
             let next = index + 1;
-            while (
-                (tokens[next] ?? "").startsWith("-") ||
-                isAssignment(tokens[next] ?? "")
-            ) {
+            while ((tokens[next] ?? "").startsWith("-") || isAssignment(tokens[next] ?? "")) {
                 next += 1;
             }
             return findPiCommand(tokens, next);
@@ -505,9 +425,7 @@ function piInvocations(section: string): PiInvocation[] {
         if (piIndex === -1) continue;
 
         if (piIndex !== 0 || tokens[0] !== "pi") {
-            throw new Error(
-                `Wrapped or compound Pi invocation is not allowed: ${block.invocation}`,
-            );
+            throw new Error(`Wrapped or compound Pi invocation is not allowed: ${block.invocation}`);
         }
 
         let kind: PiKind;
@@ -540,9 +458,7 @@ describe("delegate skill metadata", () => {
     it("exposes delegate and Pi discovery metadata", () => {
         expect(meta.name).toBe("delegate");
         expect(meta.description).toContain("Pi Coding Agent");
-        expect([
-            ...skill.matchAll(/^### Pi Coding Agent[ \t]*$/gm),
-        ]).toHaveLength(1);
+        expect([...skill.matchAll(/^### Pi Coding Agent[ \t]*$/gm)]).toHaveLength(1);
         expect(piSection).not.toBe("");
         expect(piSection).toContain("pi --list-models");
     });
@@ -564,9 +480,7 @@ describe("delegate skill model and thinking contract", () => {
     });
 
     it("uses exact implementation and restricted-review task commands", () => {
-        const implementation = tasks.filter(
-            (task) => taskRole(task) === "implementation",
-        );
+        const implementation = tasks.filter((task) => taskRole(task) === "implementation");
         const reviews = tasks.filter((task) => taskRole(task) === "review");
         const unclassified = tasks.filter((task) => taskRole(task) === null);
 
@@ -596,16 +510,10 @@ describe("delegate skill model and thinking contract", () => {
         expect(piSection).toContain(
             "run `pi --list-models`, present the relevant live candidates, and ask the user to choose",
         );
-        expect(piSection).toContain(
-            "Never infer a model from Pi's configured default",
-        );
-        expect(piSection).toContain(
-            "Never silently switch models after a failure",
-        );
+        expect(piSection).toContain("Never infer a model from Pi's configured default");
+        expect(piSection).toContain("Never silently switch models after a failure");
         expect(piSection).toContain("report the mismatch and ask the user");
-        expect(piSection).toContain(
-            "Never silently downgrade a requested thinking level",
-        );
+        expect(piSection).toContain("Never silently downgrade a requested thinking level");
     });
 });
 
@@ -624,18 +532,10 @@ describe("delegate skill failure contract", () => {
             expect(piSection).toContain(context);
         }
         expect(piSection).toContain("Then stop.");
-        expect(piSection).toContain(
-            "Do not retry the same command automatically",
-        );
-        expect(piSection).toContain(
-            "Do not retry with another model automatically",
-        );
-        expect(piSection).toContain(
-            "Do not switch to another harness automatically",
-        );
-        expect(piSection).toContain(
-            "Retry or substitute only after explicit user authorization",
-        );
+        expect(piSection).toContain("Do not retry the same command automatically");
+        expect(piSection).toContain("Do not retry with another model automatically");
+        expect(piSection).toContain("Do not switch to another harness automatically");
+        expect(piSection).toContain("Retry or substitute only after explicit user authorization");
     });
 });
 
@@ -650,15 +550,9 @@ describe("delegate skill trust and credential contract", () => {
     });
 
     it("uses the exact safe readiness command", () => {
-        const readiness = piInvocations(piSection).filter(
-            (invocation) => invocation.kind === "readiness",
-        );
+        const readiness = piInvocations(piSection).filter((invocation) => invocation.kind === "readiness");
         expect(readiness).toHaveLength(1);
-        expect(readiness[0].tokens.slice(0, 3)).toEqual([
-            "pi",
-            "auth",
-            "check",
-        ]);
+        expect(readiness[0].tokens.slice(0, 3)).toEqual(["pi", "auth", "check"]);
         expectExactOptions(
             readiness[0],
             3,

@@ -3,9 +3,7 @@ import { z } from "zod/v4";
 import type { ChorusConfig } from "@/config";
 import { BrokerModelInfoSchema, type ProviderId } from "@/types/providers";
 
-export const testConfig = (
-    overrides: Partial<ChorusConfig> = {},
-): ChorusConfig => {
+export const testConfig = (overrides: Partial<ChorusConfig> = {}): ChorusConfig => {
     return {
         cli_timeout_ms: 30_000,
         provider_timeout_ms: 120_000,
@@ -22,24 +20,17 @@ export const testModel = (input: {
     provider_model_id?: string;
     display_name?: string;
 }): ReturnType<typeof BrokerModelInfoSchema.parse> => {
-    const routeId =
-        input.route_id ??
-        `${input.provider}/${input.provider_model_id ?? input.id ?? "model"}`;
+    const routeId = input.route_id ?? `${input.provider}/${input.provider_model_id ?? input.id ?? "model"}`;
     return BrokerModelInfoSchema.parse({
         route_id: routeId,
         provider: input.provider,
-        provider_model_id:
-            input.provider_model_id ??
-            input.id ??
-            routeId.split("/").slice(1).join("/"),
+        provider_model_id: input.provider_model_id ?? input.id ?? routeId.split("/").slice(1).join("/"),
         display_name: input.display_name ?? input.id ?? routeId,
     });
 };
 
 const pushChunk = (lines: string[], chunk: string | Uint8Array): void => {
-    lines.push(
-        typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
-    );
+    lines.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
 };
 
 export const captureOutput = async <T>(
@@ -72,9 +63,7 @@ export const captureOutput = async <T>(
     }
 };
 
-export const captureStdout = async <T>(
-    run: () => Promise<T>,
-): Promise<{ output: string; result: T }> => {
+export const captureStdout = async <T>(run: () => Promise<T>): Promise<{ output: string; result: T }> => {
     const { result, stdout } = await captureOutput(run);
     return { result, output: stdout };
 };

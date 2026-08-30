@@ -85,28 +85,20 @@ const buildFixture = (): ModelsListResponse => {
 
 const expectNotFound = (result: ResolveRouteResult): NotFoundError => {
     if (result.ok) {
-        throw new Error(
-            `expected not-found result, got success: ${JSON.stringify(result.value)}`,
-        );
+        throw new Error(`expected not-found result, got success: ${JSON.stringify(result.value)}`);
     }
     if (result.error.code !== "model_not_found") {
-        throw new Error(
-            `expected model_not_found, got ${result.error.code}: ${result.error.message}`,
-        );
+        throw new Error(`expected model_not_found, got ${result.error.code}: ${result.error.message}`);
     }
     return result.error;
 };
 
 const expectAmbiguity = (result: ResolveRouteResult): AmbiguityError => {
     if (result.ok) {
-        throw new Error(
-            `expected ambiguity, got success: ${JSON.stringify(result.value)}`,
-        );
+        throw new Error(`expected ambiguity, got success: ${JSON.stringify(result.value)}`);
     }
     if (result.error.code !== "ambiguous_model") {
-        throw new Error(
-            `expected ambiguous_model, got ${result.error.code}: ${result.error.message}`,
-        );
+        throw new Error(`expected ambiguous_model, got ${result.error.code}: ${result.error.message}`);
     }
     return result.error;
 };
@@ -197,10 +189,10 @@ describe("resolve-route", () => {
         test("exact route_id for a configured passthrough provider returns a synthetic row", async () => {
             const catalog = buildFixture();
             const configured = new Set<ProviderId>(["custom"]);
-            const result = await resolveRoute(
-                classifyInput("custom/local-model"),
-                { catalog, configuredProviders: configured },
-            );
+            const result = await resolveRoute(classifyInput("custom/local-model"), {
+                catalog,
+                configuredProviders: configured,
+            });
             expect(result.ok).toBe(true);
             if (!result.ok) {
                 return;
@@ -214,10 +206,10 @@ describe("resolve-route", () => {
         test("exact route_id for a model that does not exist in the catalog returns model_not_found (no passthrough fallback)", async () => {
             const catalog = buildFixture();
             const configured = new Set<ProviderId>(["azure"]);
-            const result = await resolveRoute(
-                classifyInput("azure/nonexistent"),
-                { catalog, configuredProviders: configured },
-            );
+            const result = await resolveRoute(classifyInput("azure/nonexistent"), {
+                catalog,
+                configuredProviders: configured,
+            });
             const error = expectNotFound(result);
             expect(error.message).toContain("azure/nonexistent");
         });
@@ -245,23 +237,16 @@ describe("resolve-route", () => {
                 configuredProviders: configured,
             });
             const error = expectAmbiguity(result);
-            expect(error.candidates).toEqual([
-                "anthropic/shared",
-                "azure/shared",
-            ]);
+            expect(error.candidates).toEqual(["anthropic/shared", "azure/shared"]);
         });
 
         test("unqualified id with no catalog match returns model_not_found", async () => {
             const catalog = buildFixture();
-            const configured = new Set<ProviderId>([
-                "azure",
-                "anthropic",
-                "openrouter",
-            ]);
-            const result = await resolveRoute(
-                classifyInput("nonexistent-model"),
-                { catalog, configuredProviders: configured },
-            );
+            const configured = new Set<ProviderId>(["azure", "anthropic", "openrouter"]);
+            const result = await resolveRoute(classifyInput("nonexistent-model"), {
+                catalog,
+                configuredProviders: configured,
+            });
             const error = expectNotFound(result);
             expect(error.input).toBe("nonexistent-model");
         });

@@ -7,28 +7,13 @@ describe("redactSecrets", () => {
         const cases: Array<[string, string | undefined]> = [
             ["Authorization: Bearer sk-proj-abc123xyz...", "sk-proj-abc123xyz"],
             ["sk-ant-abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyz"],
-            [
-                "Authentication: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.signaturevalue",
-                "eyJhbGci",
-            ],
-            [
-                "Token: ghp_1234567890abcdef1234567890abcdef12345678",
-                "1234567890ab",
-            ],
-            [
-                "Token: gho_1234567890abcdef1234567890abcdef12345678",
-                "1234567890ab",
-            ],
+            ["Authentication: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test.signaturevalue", "eyJhbGci"],
+            ["Token: ghp_1234567890abcdef1234567890abcdef12345678", "1234567890ab"],
+            ["Token: gho_1234567890abcdef1234567890abcdef12345678", "1234567890ab"],
             ["key=AIzaSyabcdefghijklmnop0123456789abcdefg", "AIza"],
             ["aws_key=AKIAIOSFODNN7EXAMPLE", "AKIA"],
-            [
-                "xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx",
-                "1234567890123-abcd",
-            ],
-            [
-                "xoxp-1234567890-1234567890123-abcdefghijklmnopqrstuvwx",
-                "1234567890123-abcd",
-            ],
+            ["xoxb-1234567890-1234567890123-abcdefghijklmnopqrstuvwx", "1234567890123-abcd"],
+            ["xoxp-1234567890-1234567890123-abcdefghijklmnopqrstuvwx", "1234567890123-abcd"],
             ["Normal log message without secrets", undefined],
         ];
         for (const [input, mustNotContain] of cases) {

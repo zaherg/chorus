@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-    getModelsDevProviderKey,
-    isCatalogBackedProvider,
-} from "@/providers/provider-map";
+import { getModelsDevProviderKey, isCatalogBackedProvider } from "@/providers/provider-map";
 import { providerIdValues } from "@/types/providers";
 
 describe("provider-map", () => {

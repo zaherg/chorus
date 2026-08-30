@@ -2,11 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { runConsensus } from "@/consensus";
 import type { ProviderRegistry } from "@/providers/registry";
-import type {
-    BrokerModelInfo,
-    ModelsListResponse,
-    ProviderId,
-} from "@/types/providers";
+import type { BrokerModelInfo, ModelsListResponse, ProviderId } from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
 import { testModel } from "./helpers";
 
@@ -30,11 +26,7 @@ const registryModels: BrokerModelInfo[] = [
     makeModel("claude-sonnet-4-20250514", "anthropic"),
 ];
 
-const configuredProviders: ReadonlySet<ProviderId> = new Set<ProviderId>([
-    "openrouter",
-    "google-vertex",
-    "anthropic",
-]);
+const configuredProviders: ReadonlySet<ProviderId> = new Set<ProviderId>(["openrouter", "google-vertex", "anthropic"]);
 
 type GenerateTextResult = {
     model: string;
@@ -90,11 +82,7 @@ const mockRegistry = (overrides: RegistryOverrides = {}): ProviderRegistry => {
                 catalog?: ModelsListResponse;
                 configuredProviders?: ReadonlySet<ProviderId>;
             },
-        ) =>
-            allModels.find(
-                (model) =>
-                    model.route_id === id || model.provider_model_id === id,
-            ),
+        ) => allModels.find((model) => model.route_id === id || model.provider_model_id === id),
         isProviderConfigured: (_p: string) => true,
         generateText: async (
             modelId: string,
@@ -117,10 +105,7 @@ const mockRegistry = (overrides: RegistryOverrides = {}): ProviderRegistry => {
     return registry;
 };
 
-const okResult = (
-    modelId: string,
-    text = "ok",
-): Result<GenerateTextResult, ToolError> => ({
+const okResult = (modelId: string, text = "ok"): Result<GenerateTextResult, ToolError> => ({
     ok: true,
     value: {
         model: modelId,
@@ -130,10 +115,7 @@ const okResult = (
     },
 });
 
-const failResult = (
-    message = "API timeout",
-    retryable = true,
-): Result<GenerateTextResult, ToolError> => ({
+const failResult = (message = "API timeout", retryable = true): Result<GenerateTextResult, ToolError> => ({
     ok: false,
     error: { type: "timeout", message, retryable },
 });
@@ -205,9 +187,7 @@ describe("runConsensus", () => {
         const registry = mockRegistry({
             callLog,
             generateTextImpl: async (modelId) =>
-                modelId === "gemini-2.5-pro"
-                    ? failResult()
-                    : okResult(modelId, "yes"),
+                modelId === "gemini-2.5-pro" ? failResult() : okResult(modelId, "yes"),
         });
 
         const result = await runConsensus({
@@ -233,9 +213,7 @@ describe("runConsensus", () => {
         expect(result.synthesis).toBe("yes");
         expect(result.synthesis_error).toBeNull();
         expect(callLog).toHaveLength(3);
-        expect(
-            callLog.some((call) => call.model === "claude-sonnet-4-20250514"),
-        ).toBe(true);
+        expect(callLog.some((call) => call.model === "claude-sonnet-4-20250514")).toBe(true);
     });
 
     it("returns ok=false when a single participant call fails and no synthesis is set", async () => {
@@ -254,9 +232,7 @@ describe("runConsensus", () => {
         expect(result.ok).toBe(false);
         if (result.ok) return;
         expect(result.errors[0]).toMatch(/All participant|fail/i);
-        expect(result.errors).toContainEqual(
-            expect.stringContaining("gpt-5.2: API timeout"),
-        );
+        expect(result.errors).toContainEqual(expect.stringContaining("gpt-5.2: API timeout"));
     });
 
     it("populates synthesis when --synthesis-model is set and the call succeeds", async () => {
@@ -279,9 +255,7 @@ describe("runConsensus", () => {
         if (!result.ok) return;
         expect(result.synthesis).toBe("Response from claude-sonnet-4-20250514");
         expect(result.synthesis_error).toBeNull();
-        expect(
-            callLog.some((c) => c.model === "claude-sonnet-4-20250514"),
-        ).toBe(true);
+        expect(callLog.some((c) => c.model === "claude-sonnet-4-20250514")).toBe(true);
     });
 
     it("keeps raw responses and sets synthesis_error when synthesis call fails", async () => {
@@ -356,11 +330,7 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [
-                    { model: "gpt-5.2" },
-                    { model: "gemini-2.5-pro" },
-                    { model: "claude-sonnet-4-20250514" },
-                ],
+                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }, { model: "claude-sonnet-4-20250514" }],
                 parallel: true,
                 maxConcurrency: 1,
             }),
