@@ -220,7 +220,7 @@ export const runConsensus = async (
     }
 
     const embeddedFiles: EmbeddedFileResult = request.relevantFiles?.length
-        ? await embedFiles(request.relevantFiles)
+        ? await embedFiles(request.relevantFiles, request.modelContextWindow)
         : EMPTY_EMBEDDED;
 
     const useParallel = request.parallel !== false;
@@ -287,10 +287,16 @@ export const runConsensus = async (
         (r) => r.response !== null,
     ).length;
     if (successCount === 0) {
+        const details = participantResponses.map((r) =>
+            r.error
+                ? `${r.route_id}: ${r.error.message}`
+                : `${r.route_id}: unknown failure`,
+        );
         return {
             ok: false,
             errors: [
                 `All participant model calls failed: ${participantResponses.length} attempted`,
+                ...details,
             ],
         };
     }

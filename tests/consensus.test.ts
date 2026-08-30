@@ -254,6 +254,9 @@ describe("runConsensus", () => {
         expect(result.ok).toBe(false);
         if (result.ok) return;
         expect(result.errors[0]).toMatch(/All participant|fail/i);
+        expect(result.errors).toContainEqual(
+            expect.stringContaining("gpt-5.2: API timeout"),
+        );
     });
 
     it("populates synthesis when --synthesis-model is set and the call succeeds", async () => {

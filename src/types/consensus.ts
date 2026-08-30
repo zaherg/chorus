@@ -110,6 +110,11 @@ export interface ConsensusRequest {
     synthesisModel?: string;
     /** Optional file paths relevant to the consensus context; embedded into each prompt. */
     relevantFiles?: string[];
+    /**
+     * Context window (tokens) used to size the embedded-file budget, typically
+     * the smallest context window among participant models. Defaults to 128k.
+     */
+    modelContextWindow?: number;
 }
 
 // === Consensus result (output) ===

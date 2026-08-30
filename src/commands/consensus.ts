@@ -339,6 +339,14 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
         );
     }
 
+    const participantContextWindows = resolved
+        .map((info) => info.context_window)
+        .filter((w): w is number => w !== undefined);
+    const modelContextWindow =
+        participantContextWindows.length > 0
+            ? Math.min(...participantContextWindows)
+            : undefined;
+
     const models: ConsensusModelConfig[] = resolved.map((info) => ({
         model: info.route_id,
         stance: modelStances[info.route_id],
@@ -371,6 +379,7 @@ export const runConsensusCommand = async (args: string[]): Promise<number> => {
             temperature: globalTemperature,
             synthesisModel: resolvedSynthesisRouteId,
             relevantFiles,
+            modelContextWindow,
         });
     } catch (e) {
         brokerError("broker_error", getErrorMessage(e));

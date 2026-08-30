@@ -46,4 +46,19 @@ describe("embedFiles", () => {
         expect(result.embedded_files).toEqual([]);
         expect(result.skipped_files.length).toBeGreaterThan(0);
     });
+
+    it("scales the token budget with the provided model context window", async () => {
+        const filePath = resolve(tempDir, "big.txt");
+        // ~20k tokens: exceeds the 4k minimum budget for an 8k window,
+        // but fits the 50k ceiling used for large windows.
+        writeFileSync(filePath, "token ".repeat(20_000));
+
+        const smallWindow = await embedFiles([filePath], 8_000);
+        expect(smallWindow.embedded_files).toEqual([]);
+        expect(smallWindow.skipped_files).toEqual([realpathSync(filePath)]);
+
+        const largeWindow = await embedFiles([filePath], 512_000);
+        expect(largeWindow.embedded_files).toEqual([realpathSync(filePath)]);
+        expect(largeWindow.skipped_files).toEqual([]);
+    });
 });
