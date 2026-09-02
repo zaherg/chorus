@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { z } from "zod/v4";
 
-import { getErrorMessage } from "@/utils";
+import { getErrorMessage } from "@/utils/helpers";
 
 const getConfigDir = () => resolve(homedir(), ".config", "chorus");
 const getConfigPath = () => resolve(getConfigDir(), "config.json");
@@ -44,9 +44,7 @@ const ChorusConfigSchema = z
 
 export type ChorusConfig = z.infer<typeof ChorusConfigSchema>;
 
-export const getConfigPaths = () => {
-    return { baseDir: getConfigDir(), configPath: getConfigPath() };
-};
+export const getConfigPaths = () => ({ baseDir: getConfigDir(), configPath: getConfigPath() });
 
 const ensurePrivateMode = (path: string, mode: number, label: string) => {
     if (!supportsPosixModes) return;
@@ -62,8 +60,7 @@ const ensurePrivateMode = (path: string, mode: number, label: string) => {
     }
 };
 
-const ensureConfigDirectories = () => {
-    const configDir = getConfigDir();
+const ensureConfigDirectories = (configDir: string) => {
     mkdirSync(configDir, { mode: CONFIG_DIR_MODE, recursive: true });
     ensurePrivateMode(configDir, CONFIG_DIR_MODE, "config directory");
 };
@@ -94,21 +91,18 @@ const DEFAULT_CONFIG = {
     allow_insecure_custom: false,
 };
 
-const writeDefaultConfig = () => {
-    ensureConfigDirectories();
-    const configPath = getConfigPath();
-    writeFileSync(configPath, `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`, {
-        mode: CONFIG_FILE_MODE,
-    });
+const writeDefaultConfig = (configPath: string) => {
+    writeFileSync(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2), { mode: CONFIG_FILE_MODE });
     ensurePrivateMode(configPath, CONFIG_FILE_MODE, "config file");
     process.stderr.write(`Default config written to ${configPath}. Edit it to set your API keys and preferences.\n`);
 };
+
 export const loadConfig = async () => {
     const configPath = getConfigPath();
-    ensureConfigDirectories();
+    ensureConfigDirectories(getConfigDir());
 
     if (!existsSync(configPath)) {
-        writeDefaultConfig();
+        writeDefaultConfig(configPath);
     } else {
         ensurePrivateMode(configPath, CONFIG_FILE_MODE, "config file");
     }

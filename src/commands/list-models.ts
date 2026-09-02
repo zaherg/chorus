@@ -1,56 +1,95 @@
+import minimist from "minimist";
+import { z } from "zod/v4";
+
 import { getConfigPaths, loadConfig } from "@/config";
 import { makeLocalFileReader, makeLocalFileWriter } from "@/providers/cache-fs";
 import { loadCatalog } from "@/providers/model-catalog";
 import { isProviderConfigured } from "@/providers/registry";
 import type { BrokerModelInfo, ModelsListResponse, ProviderId, ProviderListEntry } from "@/types/providers";
-import { getErrorMessage } from "@/utils";
+import type { Result, ToolError } from "@/types/tools";
+import { getErrorMessage } from "@/utils/helpers";
 import { configureLogging } from "@/utils/logger";
+import { validateKnownBooleanTokens } from "./boolean-options";
 
-const parseFlags = (
-    rawArgs: string[],
-):
-    | {
-          ok: true;
-          refresh: boolean;
-          json: boolean;
-          help: boolean;
-          filter: string | undefined;
-      }
-    | { ok: false; flag: string } => {
-    let refresh = false;
-    let json = false;
-    let help = false;
-    let filter: string | undefined;
-    let sawSeparator = false;
-    for (const arg of rawArgs) {
-        if (sawSeparator) {
-            continue;
-        }
-        if (arg === "--") {
-            sawSeparator = true;
-            continue;
-        }
-        if (arg === "--refresh") {
-            refresh = true;
-            continue;
-        }
-        if (arg === "--json") {
-            json = true;
-            continue;
-        }
-        if (arg === "--help" || arg === "-h") {
-            help = true;
-            continue;
-        }
-        if (arg.startsWith("-")) {
-            return { ok: false, flag: arg };
-        }
-        if (filter !== undefined) {
-            return { ok: false, flag: arg };
-        }
-        filter = arg;
+const LIST_MODELS_BOOLEAN_OPTIONS = ["json", "refresh", "help", "h"] as const;
+
+const ListModelsMinimistSchema = z
+    .object({
+        _: z.array(z.string()),
+        "--": z.array(z.string()),
+        json: z.boolean(),
+        refresh: z.boolean(),
+        help: z.boolean(),
+        h: z.boolean(),
+    })
+    .strict();
+
+export type ParsedListModelsArgs = {
+    refresh: boolean;
+    json: boolean;
+    help: boolean;
+    filter: string | undefined;
+};
+
+const listModelsArgumentError = (message: string, details?: unknown): { ok: false; error: ToolError } => ({
+    ok: false,
+    error: {
+        type: "validation",
+        message,
+        details,
+        retryable: false,
+    },
+});
+
+/** Parses list-models command arguments without performing command execution. */
+export const parseListModelsArgs = (args: string[]): Result<ParsedListModelsArgs, ToolError> => {
+    const booleanSyntax = validateKnownBooleanTokens(args, LIST_MODELS_BOOLEAN_OPTIONS);
+    if (!booleanSyntax.ok) {
+        return listModelsArgumentError(`Unknown flag: ${booleanSyntax.token}`, { option: booleanSyntax.option });
     }
-    return { ok: true, refresh, json, help, filter };
+
+    const unknownOptions: string[] = [];
+    const raw: unknown = minimist(args, {
+        string: ["_"],
+        boolean: [...LIST_MODELS_BOOLEAN_OPTIONS],
+        alias: { help: "h" },
+        "--": true,
+        unknown: (token: string) => {
+            if (token === "-" || !token.startsWith("-")) {
+                return true;
+            }
+            unknownOptions.push(token);
+            return false;
+        },
+    });
+    const rawValidation = ListModelsMinimistSchema.safeParse(raw);
+    if (!rawValidation.success) {
+        return listModelsArgumentError("Invalid arguments", rawValidation.error.issues);
+    }
+    if (unknownOptions.length > 0) {
+        return listModelsArgumentError(`Unknown flag: ${unknownOptions[0]}`);
+    }
+
+    const parsed = rawValidation.data;
+    if (booleanSyntax.separatorPresent || parsed["--"].length > 0) {
+        return listModelsArgumentError("Unknown flag: --");
+    }
+    if (parsed._.length > 1) {
+        return listModelsArgumentError(`Unknown flag: ${parsed._[1]}`);
+    }
+    if (parsed._[0] === "-") {
+        return listModelsArgumentError("Unknown flag: -");
+    }
+
+    return {
+        ok: true,
+        value: {
+            refresh: parsed.refresh,
+            json: parsed.json,
+            help: parsed.help,
+            filter: parsed._[0],
+        },
+    };
 };
 
 const HELP_TEXT = `consensus list-models -- list model IDs available from configured providers
@@ -160,12 +199,14 @@ const applyModelFilter = (response: ModelsListResponse, filter: string | undefin
 };
 
 export const runListModelsCommand = async (args: string[]) => {
-    const parsed = parseFlags(args);
+    const parsed = parseListModelsArgs(args);
     if (!parsed.ok) {
-        process.stderr.write(`Unknown flag: ${parsed.flag}\n`);
+        process.stderr.write(`${parsed.error.message}\n`);
         return 2;
     }
-    if (parsed.help) {
+
+    const { filter, help, json, refresh } = parsed.value;
+    if (help) {
         process.stdout.write(HELP_TEXT);
         return 0;
     }
@@ -188,11 +229,11 @@ export const runListModelsCommand = async (args: string[]) => {
         fetchFn: globalThis.fetch,
         reader,
         writer,
-        forceRefresh: parsed.refresh,
+        forceRefresh: refresh,
     });
 
     if (!result.ok) {
-        if (parsed.json) {
+        if (json) {
             const payload = {
                 schema: "models.list.error/1" as const,
                 error: {
@@ -216,10 +257,10 @@ export const runListModelsCommand = async (args: string[]) => {
             },
             config,
         ),
-        parsed.filter,
+        filter,
     );
 
-    if (parsed.json) {
+    if (json) {
         process.stdout.write(`${JSON.stringify(filtered, null, 2)}\n`);
     } else {
         process.stdout.write(formatHuman(filtered, result.warning));

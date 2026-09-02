@@ -10,7 +10,7 @@ import type { ChorusConfig } from "@/config";
 import { classifyInput, resolveRoute } from "@/providers/resolve-route";
 import type { BrokerModelInfo, ModelsListResponse, ProviderId } from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
-import { estimateTokenCount } from "@/utils";
+import { estimateTokenCount } from "@/utils/helpers";
 import { createSafeCustomFetch, customProviderBaseUrl, defaultDnsResolve } from "./custom-url";
 
 type GenerateTextFn = typeof aiGenerateText;

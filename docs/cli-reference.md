@@ -15,6 +15,16 @@ consensus --models "<route_id>,<route_id>" --prompt "..." [flags]
 consensus --stdin-json
 ```
 
+### Argument Syntax
+
+Value-bearing flags accept `--flag <value>` and `--flag=<value>`.
+Use the equals form when a value begins with `-`, for example `--prompt=-draft`.
+Command-specific boolean flags accept `--flag`, `--flag=true`, `--flag=false`, and `--no-flag`.
+A negated boolean cannot use an assigned value, so `--no-flag=true` is rejected.
+Unknown option tokens are rejected rather than treated as positional input.
+The `--` separator and every argument following it are rejected.
+`--models`, `--prompt`, `--temperature`, `--synthesis-model`, and `--files` are scalar flags and may each be specified only once.
+
 ### FLAGS
 
 #### Required

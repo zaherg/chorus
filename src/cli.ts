@@ -46,6 +46,12 @@ FLAGS:
   --version, -v  Print version and exit
   --help, -h     Print this help and exit
 
+ARGUMENT SYNTAX:
+  Value flags: --flag value or --flag=value. Use equals form for a value beginning with "-".
+  Command boolean flags: --flag, --flag=true, --flag=false, or --no-flag. Negated flags do not accept values.
+  Unknown flags and arguments after -- are rejected.
+  Consensus scalar flags (--models, --prompt, --temperature, --synthesis-model, --files) may be specified once.
+
 CONSENSUS USAGE:
   consensus --models "m1,m2" --prompt "..." [flags]
 

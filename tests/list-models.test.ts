@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 
-import { runListModelsCommand } from "@/commands/list-models";
+import { parseListModelsArgs, runListModelsCommand } from "@/commands/list-models";
 import { BrokerModelInfoSchema, type ModelsListResponse, type ProviderListEntry } from "@/types/providers";
 import { captureOutput, testConfig } from "./helpers";
 
@@ -84,6 +84,85 @@ const stubLoadCatalog = (
     }));
     return { calls };
 };
+
+describe("parseListModelsArgs", () => {
+    const expectSuccess = (
+        args: string[],
+        value: { filter: string | undefined; help: boolean; json: boolean; refresh: boolean },
+    ) => {
+        expect(parseListModelsArgs(args)).toEqual({ ok: true, value });
+    };
+
+    const expectFailure = (args: string[], message: string) => {
+        const parsed = parseListModelsArgs(args);
+        expect(parsed.ok).toBe(false);
+        if (parsed.ok) {
+            return;
+        }
+        expect(parsed.error.type).toBe("validation");
+        expect(parsed.error.message).toBe(message);
+    };
+
+    it("normalizes optional filters, known booleans, and help aliases", () => {
+        expectSuccess([], { filter: undefined, help: false, json: false, refresh: false });
+        expectSuccess(["KiMi"], { filter: "KiMi", help: false, json: false, refresh: false });
+        expectSuccess(["123"], { filter: "123", help: false, json: false, refresh: false });
+        expectSuccess(["--refresh=true", "--json=false", "--help=true", "KiMi"], {
+            filter: "KiMi",
+            help: true,
+            json: false,
+            refresh: true,
+        });
+        expectSuccess(["--no-refresh", "--no-json", "--no-help"], {
+            filter: undefined,
+            help: false,
+            json: false,
+            refresh: false,
+        });
+        expectSuccess(["-h"], { filter: undefined, help: true, json: false, refresh: false });
+        expectSuccess(["--h=true"], { filter: undefined, help: true, json: false, refresh: false });
+        expectSuccess(["--h=false"], { filter: undefined, help: false, json: false, refresh: false });
+        expectSuccess(["--no-h"], { filter: undefined, help: false, json: false, refresh: false });
+    });
+
+    it("uses the last known boolean value", () => {
+        expectSuccess(["--refresh", "--no-refresh"], {
+            filter: undefined,
+            help: false,
+            json: false,
+            refresh: false,
+        });
+        expectSuccess(["--json=false", "--json"], {
+            filter: undefined,
+            help: false,
+            json: true,
+            refresh: false,
+        });
+        expectSuccess(["--help", "--no-help"], {
+            filter: undefined,
+            help: false,
+            json: false,
+            refresh: false,
+        });
+    });
+
+    it("rejects malformed list-model arguments", () => {
+        expectFailure(["--bogus"], "Unknown flag: --bogus");
+        expectFailure(["-x"], "Unknown flag: -x");
+        expectFailure(["kimi", "extra"], "Unknown flag: extra");
+        expectFailure(["--"], "Unknown flag: --");
+        expectFailure(["--", "tail"], "Unknown flag: --");
+        expectFailure(["-"], "Unknown flag: -");
+        expectFailure(["--refresh=invalid"], "Unknown flag: --refresh=invalid");
+        expectFailure(["--json=1"], "Unknown flag: --json=1");
+        expectFailure(["--help=yes"], "Unknown flag: --help=yes");
+        expectFailure(["--h=0"], "Unknown flag: --h=0");
+        expectFailure(["--no-refresh=false"], "Unknown flag: --no-refresh=false");
+        expectFailure(["--no-json=true"], "Unknown flag: --no-json=true");
+        expectFailure(["--no-help=false"], "Unknown flag: --no-help=false");
+        expectFailure(["--no-h=true"], "Unknown flag: --no-h=true");
+    });
+});
 
 describe("runListModelsCommand", () => {
     it("emits a models.list/1 payload with only configured providers and cache metadata", async () => {
@@ -286,5 +365,82 @@ describe("runListModelsCommand", () => {
         const { result, stderr } = await captureOutput(() => runListModelsCommand(["kimi", "extra"]));
         expect(result).toBe(2);
         expect(stderr).toContain("Unknown flag: extra");
+    });
+
+    it("rejects a bare separator before loading configuration or the catalog", async () => {
+        let configCalls = 0;
+        let catalogCalls = 0;
+        mock.module("@/config", () => ({
+            loadConfig: async () => {
+                configCalls += 1;
+                throw new Error("configuration should not load");
+            },
+        }));
+        mock.module("@/providers/model-catalog", () => ({
+            loadCatalog: async () => {
+                catalogCalls += 1;
+                throw new Error("catalog should not load");
+            },
+        }));
+
+        const { result, stdout, stderr } = await captureOutput(() => runListModelsCommand(["--"]));
+
+        expect(result).toBe(2);
+        expect(stdout).toBe("");
+        expect(stderr).toBe("Unknown flag: --\n");
+        expect(configCalls).toBe(0);
+        expect(catalogCalls).toBe(0);
+    });
+
+    it("returns parser errors before help without loading configuration or the catalog", async () => {
+        let configCalls = 0;
+        let catalogCalls = 0;
+        mock.module("@/config", () => ({
+            loadConfig: async () => {
+                configCalls += 1;
+                throw new Error("configuration should not load");
+            },
+        }));
+        mock.module("@/providers/model-catalog", () => ({
+            loadCatalog: async () => {
+                catalogCalls += 1;
+                throw new Error("catalog should not load");
+            },
+        }));
+
+        const { result, stdout, stderr } = await captureOutput(() =>
+            runListModelsCommand(["--refresh=invalid", "--help"]),
+        );
+
+        expect(result).toBe(2);
+        expect(stdout).toBe("");
+        expect(stderr).toBe("Unknown flag: --refresh=invalid\n");
+        expect(configCalls).toBe(0);
+        expect(catalogCalls).toBe(0);
+    });
+
+    it("prints help without loading configuration or the catalog", async () => {
+        let configCalls = 0;
+        let catalogCalls = 0;
+        mock.module("@/config", () => ({
+            loadConfig: async () => {
+                configCalls += 1;
+                throw new Error("configuration should not load");
+            },
+        }));
+        mock.module("@/providers/model-catalog", () => ({
+            loadCatalog: async () => {
+                catalogCalls += 1;
+                throw new Error("catalog should not load");
+            },
+        }));
+
+        const { result, stdout, stderr } = await captureOutput(() => runListModelsCommand(["--help"]));
+
+        expect(result).toBe(0);
+        expect(stdout).toContain("consensus list-models");
+        expect(stderr).toBe("");
+        expect(configCalls).toBe(0);
+        expect(catalogCalls).toBe(0);
     });
 });

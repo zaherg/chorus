@@ -5,12 +5,12 @@ import type {
     ConsensusRequest,
     ConsensusResult,
     ParticipantResponse,
-    Stance,
 } from "@/types/consensus";
-import { getErrorMessage } from "@/utils";
 import type { EmbeddedFileResult } from "@/utils/files";
 import { embedFiles } from "@/utils/files";
+import { getErrorMessage } from "@/utils/helpers";
 import { logger } from "@/utils/logger";
+import { buildConsensusPrompt, buildSynthesisPrompt } from "@/utils/prompts";
 
 const EMPTY_EMBEDDED: EmbeddedFileResult = {
     embedded_files: [],
@@ -19,49 +19,17 @@ const EMPTY_EMBEDDED: EmbeddedFileResult = {
     total_tokens: 0,
 };
 
-const buildConsensusPrompt = (
-    step: string,
-    findings: string,
-    stance: Stance,
-    fileText: string,
-    priorResponses?: ParticipantResponse[],
-) => {
-    const sections = [`Consensus review for stance: ${stance}`, `Proposal:\n${step}`, `Current findings:\n${findings}`];
-    if (priorResponses?.length) {
-        sections.push(
-            `<previous-model-responses>\n${JSON.stringify(priorResponses, null, 2)}\n</previous-model-responses>`,
-        );
-    }
-    if (fileText) {
-        sections.push(`Embedded files:\n${fileText}`);
-    }
-    return sections.join("\n\n");
-};
-
-const buildSynthesisPrompt = (
-    step: string,
-    findings: string,
-    successfulResponses: ParticipantResponse[],
-    fileText: string,
-) => {
-    const sections = [
-        "Synthesize the following model perspectives into a single recommendation.",
-        `Proposal:\n${step}`,
-        `Independent findings:\n${findings}`,
-        `<model-responses>\n${JSON.stringify(successfulResponses, null, 2)}\n</model-responses>`,
-    ];
-    if (fileText) {
-        sections.push(`Embedded files:\n${fileText}`);
-    }
-    return sections.join("\n\n");
-};
-
-const queryModel = async (
-    modelConfig: ConsensusModelConfig,
-    request: ConsensusRequest,
-    fileText: string,
-    priorResponses?: ParticipantResponse[],
-): Promise<ParticipantResponse> => {
+const queryModel = async ({
+    modelConfig,
+    request,
+    fileText,
+    priorResponses,
+}: {
+    modelConfig: ConsensusModelConfig;
+    request: ConsensusRequest;
+    fileText: string;
+    priorResponses?: ParticipantResponse[];
+}): Promise<ParticipantResponse> => {
     const modelId = modelConfig.model;
     const stance = modelConfig.stance ?? "neutral";
     const modelInfo = await request.providerRegistry.getModelInfo(modelId, {
@@ -83,7 +51,13 @@ const queryModel = async (
         };
     }
 
-    const prompt = buildConsensusPrompt(request.step, request.findings, stance, fileText, priorResponses);
+    const prompt = buildConsensusPrompt({
+        step: request.step,
+        findings: request.findings,
+        stance,
+        fileText,
+        priorResponses,
+    });
     const temperature = modelConfig.temperature ?? request.temperature;
     const result = await request.providerRegistry.generateText(modelInfo.route_id, prompt, CONSENSUS_SYSTEM_PROMPT, {
         abortSignal: request.abortSignal,
@@ -202,7 +176,12 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
         const results = await runSettledWithConcurrency(
             request.models,
             request.maxConcurrency ?? request.models.length,
-            (modelConfig) => queryModel(modelConfig, request, embeddedFiles.embedded_text),
+            (modelConfig) =>
+                queryModel({
+                    modelConfig,
+                    request,
+                    fileText: embeddedFiles.embedded_text,
+                }),
         );
         for (let i = 0; i < results.length; i++) {
             const r = results[i];
@@ -224,7 +203,12 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
 
             const priorResponses = participantResponses.length > 0 ? participantResponses : undefined;
             try {
-                const response = await queryModel(modelConfig, request, embeddedFiles.embedded_text, priorResponses);
+                const response = await queryModel({
+                    modelConfig,
+                    request,
+                    fileText: embeddedFiles.embedded_text,
+                    priorResponses,
+                });
                 if (response.error) {
                     logger?.warn(`Model ${modelConfig.model} failed: ${response.error.message}`);
                 }
@@ -266,12 +250,12 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
             };
         } else {
             const successfulResponses = participantResponses.filter((r) => r.response !== null);
-            const synthesisPrompt = buildSynthesisPrompt(
-                request.step,
-                request.findings,
+            const synthesisPrompt = buildSynthesisPrompt({
+                step: request.step,
+                findings: request.findings,
                 successfulResponses,
-                embeddedFiles.embedded_text,
-            );
+                fileText: embeddedFiles.embedded_text,
+            });
             const synthesisResult = await request.providerRegistry.generateText(
                 synthesisInfo.route_id,
                 synthesisPrompt,

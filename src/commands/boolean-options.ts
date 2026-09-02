@@ -1,0 +1,50 @@
+export type BooleanTokenValidation =
+    | { ok: true; separatorPresent: boolean }
+    | {
+          ok: false;
+          option: string;
+          token: string;
+      };
+
+/**
+ * Validates the long-form syntax of declared boolean options before minimist
+ * collapses assigned values other than the literal "false" to `true`.
+ */
+export const validateKnownBooleanTokens = (
+    rawArgs: readonly string[],
+    optionNames: readonly string[],
+): BooleanTokenValidation => {
+    const knownOptions = new Set(optionNames);
+
+    for (const token of rawArgs) {
+        if (token === "--") {
+            return { ok: true, separatorPresent: true };
+        }
+        if (!token.startsWith("--")) {
+            continue;
+        }
+
+        const optionToken = token.slice(2);
+        const negated = optionToken.startsWith("no-");
+        const optionAndValue = negated ? optionToken.slice(3) : optionToken;
+        const equalsIndex = optionAndValue.indexOf("=");
+        const optionName = equalsIndex === -1 ? optionAndValue : optionAndValue.slice(0, equalsIndex);
+
+        if (!knownOptions.has(optionName)) {
+            continue;
+        }
+        if (negated && equalsIndex !== -1) {
+            return { ok: false, option: `--no-${optionName}`, token };
+        }
+        if (equalsIndex === -1) {
+            continue;
+        }
+
+        const assignedValue = optionAndValue.slice(equalsIndex + 1);
+        if (assignedValue !== "true" && assignedValue !== "false") {
+            return { ok: false, option: `--${optionName}`, token };
+        }
+    }
+
+    return { ok: true, separatorPresent: false };
+};

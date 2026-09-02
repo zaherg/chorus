@@ -37,7 +37,7 @@ import {
     ProviderModelEntrySchema,
     providerIdValues,
 } from "@/types/providers";
-import { getErrorMessage } from "@/utils";
+import { getErrorMessage } from "@/utils/helpers";
 import pkg from "../../package.json";
 import { getModelsDevProviderKey, isCatalogBackedProvider } from "./provider-map";
 

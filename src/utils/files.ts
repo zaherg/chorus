@@ -3,7 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 
-import { estimateTokenCount } from "@/utils";
+import { estimateTokenCount } from "@/utils/helpers";
 import { logger } from "./logger";
 
 const MAX_EMBEDDED_FILE_TOKENS = 50_000;

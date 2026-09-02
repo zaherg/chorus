@@ -1,3 +1,4 @@
+import minimist from "minimist";
 import { z } from "zod/v4";
 
 import { getConfigPaths, loadConfig } from "@/config";
@@ -8,8 +9,10 @@ import { createProviderRegistry, isProviderConfigured } from "@/providers/regist
 import { classifyInput, type ResolveRouteOptions, resolveRoute } from "@/providers/resolve-route";
 import type { ParticipantError, Stance } from "@/types/consensus";
 import { type BrokerModelInfo, providerIdValues } from "@/types/providers";
-import { getErrorMessage } from "@/utils";
+import type { Result, ToolError } from "@/types/tools";
+import { getErrorMessage } from "@/utils/helpers";
 import { configureLogging } from "@/utils/logger";
+import { validateKnownBooleanTokens } from "./boolean-options";
 
 const THINKING_MODE_VALUES = ["minimal", "low", "medium", "high", "max"] as const;
 type ThinkingMode = (typeof THINKING_MODE_VALUES)[number];
@@ -51,42 +54,194 @@ const StdinConsensusSchema = z.object({
     synthesis_model: z.string().optional(),
 });
 
-const parseModelKeyValueFlags = <T>(flags: string[], validate: (raw: string) => T | undefined) => {
+const CONSENSUS_BOOLEAN_OPTIONS = ["sequential", "stdin-json", "schema"] as const;
+
+const ConsensusMinimistSchema = z
+    .object({
+        _: z.array(z.string()),
+        "--": z.array(z.string()),
+        models: z.union([z.string(), z.array(z.string())]).optional(),
+        prompt: z.union([z.string(), z.array(z.string())]).optional(),
+        temperature: z.union([z.string(), z.array(z.string())]).optional(),
+        "synthesis-model": z.union([z.string(), z.array(z.string())]).optional(),
+        files: z.union([z.string(), z.array(z.string())]).optional(),
+        stance: z.union([z.string(), z.array(z.string())]).optional(),
+        "thinking-mode": z.union([z.string(), z.array(z.string())]).optional(),
+        "temperature-model": z.union([z.string(), z.array(z.string())]).optional(),
+        sequential: z.boolean(),
+        "stdin-json": z.boolean(),
+        schema: z.boolean(),
+    })
+    .strict();
+
+type ConsensusScalarValue = string | string[] | undefined;
+
+export type ParsedConsensusArgs = {
+    models: string | undefined;
+    prompt: string | undefined;
+    temperature: string | undefined;
+    synthesisModel: string | undefined;
+    files: string | undefined;
+    stance: string[];
+    thinkingMode: string[];
+    temperatureModel: string[];
+    sequential: boolean;
+    stdinJson: boolean;
+    schema: boolean;
+};
+
+const consensusArgumentError = (message: string, details?: unknown): { ok: false; error: ToolError } => ({
+    ok: false,
+    error: {
+        type: "validation",
+        message,
+        details,
+        retryable: false,
+    },
+});
+
+const normalizeConsensusScalar = (
+    option: string,
+    value: ConsensusScalarValue,
+): Result<string | undefined, ToolError> => {
+    if (Array.isArray(value)) {
+        return consensusArgumentError(`Error: --${option} may only be specified once`);
+    }
+    if (value === "") {
+        return consensusArgumentError(`Error: --${option} requires a value`);
+    }
+    return { ok: true, value };
+};
+
+const normalizeRepeatableOption = (value: string | string[] | undefined): string[] => {
+    if (value === undefined) {
+        return [];
+    }
+    return Array.isArray(value) ? value : [value];
+};
+
+const TEMPERATURE_VALUE_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+const parseUnitIntervalTemperature = (value: string): number | undefined => {
+    const normalized = value.trim();
+    if (!TEMPERATURE_VALUE_PATTERN.test(normalized)) {
+        return undefined;
+    }
+
+    const temperature = Number(normalized);
+    return Number.isFinite(temperature) && temperature >= 0 && temperature <= 1 ? temperature : undefined;
+};
+
+/** Parses consensus command arguments without performing command execution. */
+export const parseConsensusArgs = (args: string[]): Result<ParsedConsensusArgs, ToolError> => {
+    const booleanSyntax = validateKnownBooleanTokens(args, CONSENSUS_BOOLEAN_OPTIONS);
+    if (!booleanSyntax.ok) {
+        const message = booleanSyntax.option.startsWith("--no-")
+            ? `Error: ${booleanSyntax.option} does not accept an assigned value`
+            : `Error: ${booleanSyntax.option} must be true or false`;
+        return consensusArgumentError(message, { token: booleanSyntax.token });
+    }
+
+    const unknownOptions: string[] = [];
+    const raw: unknown = minimist(args, {
+        string: [
+            "_",
+            "models",
+            "prompt",
+            "temperature",
+            "synthesis-model",
+            "files",
+            "stance",
+            "thinking-mode",
+            "temperature-model",
+        ],
+        boolean: [...CONSENSUS_BOOLEAN_OPTIONS],
+        "--": true,
+        unknown: (token: string) => {
+            if (token.startsWith("-")) {
+                unknownOptions.push(token);
+                return false;
+            }
+            return true;
+        },
+    });
+    const rawValidation = ConsensusMinimistSchema.safeParse(raw);
+    if (!rawValidation.success) {
+        return consensusArgumentError("Error: invalid arguments", rawValidation.error.issues);
+    }
+    if (unknownOptions.length > 0) {
+        return consensusArgumentError(`Error: unknown option ${unknownOptions[0]}`);
+    }
+
+    const parsed = rawValidation.data;
+    if (parsed._.length > 0) {
+        return consensusArgumentError(`Error: unexpected argument ${parsed._[0]}`);
+    }
+    if (booleanSyntax.separatorPresent || parsed["--"].length > 0) {
+        return consensusArgumentError("Error: arguments after -- are not supported");
+    }
+
+    const models = normalizeConsensusScalar("models", parsed.models);
+    if (!models.ok) {
+        return models;
+    }
+    const prompt = normalizeConsensusScalar("prompt", parsed.prompt);
+    if (!prompt.ok) {
+        return prompt;
+    }
+    const temperature = normalizeConsensusScalar("temperature", parsed.temperature);
+    if (!temperature.ok) {
+        return temperature;
+    }
+    const synthesisModel = normalizeConsensusScalar("synthesis-model", parsed["synthesis-model"]);
+    if (!synthesisModel.ok) {
+        return synthesisModel;
+    }
+    const files = normalizeConsensusScalar("files", parsed.files);
+    if (!files.ok) {
+        return files;
+    }
+
+    return {
+        ok: true,
+        value: {
+            models: models.value,
+            prompt: prompt.value,
+            temperature: temperature.value,
+            synthesisModel: synthesisModel.value,
+            files: files.value,
+            stance: normalizeRepeatableOption(parsed.stance),
+            thinkingMode: normalizeRepeatableOption(parsed["thinking-mode"]),
+            temperatureModel: normalizeRepeatableOption(parsed["temperature-model"]),
+            sequential: parsed.sequential,
+            stdinJson: parsed["stdin-json"],
+            schema: parsed.schema,
+        },
+    };
+};
+
+const parseModelKeyValueFlags = <T>(
+    option: string,
+    flags: string[],
+    validate: (raw: string) => T | undefined,
+    expected: string,
+): Result<Record<string, T>, ToolError> => {
     const result: Record<string, T> = {};
-    for (const f of flags) {
-        const eqIdx = f.indexOf("=");
-        if (eqIdx > 0) {
-            const model = f.slice(0, eqIdx);
-            const value = f.slice(eqIdx + 1);
-            const validated = validate(value);
-            if (validated !== undefined) result[model] = validated;
+    for (const flag of flags) {
+        const equalsIndex = flag.indexOf("=");
+        if (equalsIndex <= 0) {
+            return consensusArgumentError(`Error: --${option} must use ${expected}`);
         }
-    }
-    return result;
-};
 
-const parseRepeatableFlag = (args: string[], flagName: string) => {
-    const results: string[] = [];
-    for (let i = 0; i < args.length; i++) {
-        if (args[i] === flagName && i + 1 < args.length) {
-            results.push(args[i + 1]);
-            i++;
+        const model = flag.slice(0, equalsIndex);
+        const value = flag.slice(equalsIndex + 1);
+        const validated = validate(value);
+        if (validated === undefined) {
+            return consensusArgumentError(`Error: --${option} must use ${expected}`);
         }
+        result[model] = validated;
     }
-    return results;
-};
-
-const parseSingleFlag = (args: string[], flagName: string) => {
-    for (let i = 0; i < args.length; i++) {
-        if (args[i] === flagName && i + 1 < args.length) {
-            return args[i + 1];
-        }
-    }
-    return undefined;
-};
-
-const parseBooleanFlag = (args: string[], flagName: string) => {
-    return args.includes(flagName);
+    return { ok: true, value: result };
 };
 
 const printError = (payload: object) => {
@@ -124,21 +279,30 @@ const resolveOne = async (
 };
 
 export const runConsensusCommand = async (args: string[]) => {
-    if (parseBooleanFlag(args, "--schema")) {
+    const parsed = parseConsensusArgs(args);
+    if (!parsed.ok) {
+        process.stderr.write(`${parsed.error.message}\n`);
+        return 2;
+    }
+
+    const {
+        files: filesStr,
+        models: modelsStr,
+        prompt,
+        schema,
+        sequential,
+        stance: stanceFlags,
+        stdinJson,
+        synthesisModel: synthesisModelFlag,
+        temperature: temperatureStr,
+        temperatureModel: tempModelFlags,
+        thinkingMode: thinkingModeFlags,
+    } = parsed.value;
+
+    if (schema) {
         process.stdout.write(`${JSON.stringify(SCHEMA_JSON, null, 2)}\n`);
         return 0;
     }
-
-    const modelsStr = parseSingleFlag(args, "--models");
-    const prompt = parseSingleFlag(args, "--prompt");
-    const stdinJson = parseBooleanFlag(args, "--stdin-json");
-    const temperatureStr = parseSingleFlag(args, "--temperature");
-    const synthesisModelFlag = parseSingleFlag(args, "--synthesis-model");
-    const sequential = parseBooleanFlag(args, "--sequential");
-    const filesStr = parseSingleFlag(args, "--files");
-    const stanceFlags = parseRepeatableFlag(args, "--stance");
-    const thinkingModeFlags = parseRepeatableFlag(args, "--thinking-mode");
-    const tempModelFlags = parseRepeatableFlag(args, "--temperature-model");
 
     let modelInputs: string[];
     let promptText: string;
@@ -193,12 +357,12 @@ export const runConsensusCommand = async (args: string[]) => {
         step = prompt;
 
         if (temperatureStr) {
-            const t = parseFloat(temperatureStr);
-            if (Number.isNaN(t) || t < 0 || t > 1) {
+            const temperature = parseUnitIntervalTemperature(temperatureStr);
+            if (temperature === undefined) {
                 process.stderr.write("Error: --temperature must be a number between 0 and 1\n");
                 return 2;
             }
-            globalTemperature = t;
+            globalTemperature = temperature;
         }
 
         if (filesStr) {
@@ -208,18 +372,43 @@ export const runConsensusCommand = async (args: string[]) => {
                 .filter(Boolean);
         }
 
-        modelStances = parseModelKeyValueFlags(stanceFlags, (v) =>
-            ["for", "against", "neutral"].includes(v) ? (v as Stance) : undefined,
+        const parsedStances = parseModelKeyValueFlags(
+            "stance",
+            stanceFlags,
+            (value): Stance | undefined =>
+                ["for", "against", "neutral"].includes(value) ? (value as Stance) : undefined,
+            "model=for|against|neutral",
         );
+        if (!parsedStances.ok) {
+            process.stderr.write(`${parsedStances.error.message}\n`);
+            return 2;
+        }
+        modelStances = parsedStances.value;
 
-        modelThinkingModes = parseModelKeyValueFlags(thinkingModeFlags, (v) =>
-            THINKING_MODE_VALUES.includes(v as ThinkingMode) ? (v as ThinkingMode) : undefined,
+        const parsedThinkingModes = parseModelKeyValueFlags(
+            "thinking-mode",
+            thinkingModeFlags,
+            (value): ThinkingMode | undefined =>
+                THINKING_MODE_VALUES.includes(value as ThinkingMode) ? (value as ThinkingMode) : undefined,
+            "model=minimal|low|medium|high|max",
         );
+        if (!parsedThinkingModes.ok) {
+            process.stderr.write(`${parsedThinkingModes.error.message}\n`);
+            return 2;
+        }
+        modelThinkingModes = parsedThinkingModes.value;
 
-        modelTemperatures = parseModelKeyValueFlags(tempModelFlags, (v) => {
-            const t = parseFloat(v);
-            return !Number.isNaN(t) && t >= 0 && t <= 1 ? t : undefined;
-        });
+        const parsedTemperatures = parseModelKeyValueFlags(
+            "temperature-model",
+            tempModelFlags,
+            parseUnitIntervalTemperature,
+            "model=<number between 0 and 1>",
+        );
+        if (!parsedTemperatures.ok) {
+            process.stderr.write(`${parsedTemperatures.error.message}\n`);
+            return 2;
+        }
+        modelTemperatures = parsedTemperatures.value;
     }
 
     if (modelInputs.length < 2) {

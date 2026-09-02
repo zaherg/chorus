@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 
-import { getErrorMessage } from "@/utils";
+import { getErrorMessage } from "@/utils/helpers";
 import type { FileReader, FileWriter } from "./model-catalog";
 
 /**
