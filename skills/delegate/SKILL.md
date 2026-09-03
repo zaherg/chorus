@@ -1,6 +1,7 @@
 ---
 name: delegate
-description: Use when you need to shell out to external CLI coding agents such as Claude Code, Codex, OpenCode, GitHub Copilot, or Pi Coding Agent for focused sub-tasks or parallel independent work.
+description: Use only when the user explicitly asks to shell out to external CLI coding agents such as Claude Code, Codex, OpenCode, GitHub Copilot, or Pi Coding Agent for focused sub-tasks or parallel independent work.
+disable-model-invocation: true
 ---
 
 # Delegate
@@ -14,6 +15,8 @@ Delegate tasks to specialized CLI agents (Claude Code, Codex, OpenCode, GitHub C
 - Code changes by a coding-focused agent
 
 <critical>
+- Do not invoke this skill automatically.
+- Invoke only when the user explicitly requests external CLI delegation.
 - Never try another agent if the one the user asked for didn't work or sidetracked.
 </critical>
 
