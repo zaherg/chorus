@@ -9,13 +9,6 @@ import { logger } from "./logger";
 const MAX_EMBEDDED_FILE_TOKENS = 50_000;
 const MAX_EMBEDDED_FILE_BYTES = 50 * 1024 * 1024;
 
-export interface EmbeddedFileResult {
-    embedded_files: string[];
-    embedded_text: string;
-    skipped_files: string[];
-    total_tokens: number;
-}
-
 let _allowedRoots: string[] | undefined;
 
 const getAllowedRoots = () => {

@@ -226,7 +226,7 @@ const parseModelKeyValueFlags = <T>(
     validate: (raw: string) => T | undefined,
     expected: string,
 ): Result<Record<string, T>, ToolError> => {
-    const result: Record<string, T> = {};
+    const assignments = new Map<string, T>();
     for (const flag of flags) {
         const equalsIndex = flag.indexOf("=");
         if (equalsIndex <= 0) {
@@ -239,9 +239,31 @@ const parseModelKeyValueFlags = <T>(
         if (validated === undefined) {
             return consensusArgumentError(`Error: --${option} must use ${expected}`);
         }
-        result[model] = validated;
+        if (assignments.has(model) && !Object.is(assignments.get(model), validated)) {
+            return consensusArgumentError(`Error: conflicting --${option} values for selector '${model}'`);
+        }
+        assignments.set(model, validated);
     }
-    return { ok: true, value: result };
+    return { ok: true, value: Object.fromEntries(assignments) };
+};
+
+const normalizeModelOptionMap = <T>(
+    field: string,
+    values: Record<string, T>,
+    selectorRoutes: ReadonlyMap<string, string>,
+): Result<Record<string, T>, ToolError> => {
+    const normalized: Record<string, T> = {};
+    for (const [selector, value] of Object.entries(values)) {
+        const routeId = selectorRoutes.get(selector);
+        if (routeId === undefined) {
+            return consensusArgumentError(`Error: unresolved ${field} selector '${selector}'`);
+        }
+        if (Object.hasOwn(normalized, routeId) && !Object.is(normalized[routeId], value)) {
+            return consensusArgumentError(`Error: conflicting ${field} values for model '${routeId}'`);
+        }
+        normalized[routeId] = value;
+    }
+    return { ok: true, value: normalized };
 };
 
 const printError = (payload: object) => {
@@ -316,11 +338,18 @@ export const runConsensusCommand = async (args: string[]) => {
     let synthesisModel = synthesisModelFlag;
 
     if (stdinJson) {
-        const chunks: Buffer[] = [];
-        for await (const chunk of process.stdin) {
-            chunks.push(chunk as Buffer);
+        let stdinText: string;
+        try {
+            const chunks: Buffer[] = [];
+            for await (const chunk of process.stdin) {
+                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            }
+            stdinText = Buffer.concat(chunks).toString("utf8");
+        } catch (e) {
+            process.stderr.write(`Error: Failed to read --stdin-json input: ${getErrorMessage(e)}\n`);
+            return 1;
         }
-        const stdinText = Buffer.concat(chunks).toString("utf8");
+
         let parsed: z.infer<typeof StdinConsensusSchema>;
         try {
             parsed = StdinConsensusSchema.parse(JSON.parse(stdinText));
@@ -454,6 +483,51 @@ export const runConsensusCommand = async (args: string[]) => {
         resolved.push(r.value);
     }
 
+    const selectedRouteIds = new Set(resolved.map((info) => info.route_id));
+    const activeSelectors = new Set([
+        ...Object.keys(modelStances),
+        ...Object.keys(modelThinkingModes),
+        ...Object.keys(modelTemperatures),
+    ]);
+    const selectorRoutes = new Map<string, string>();
+    for (const selector of activeSelectors) {
+        const resolution = await resolveOne(selector, routeOptions);
+        if (!resolution.ok) {
+            return 3;
+        }
+        selectorRoutes.set(selector, resolution.value.route_id);
+    }
+
+    for (const [selector, routeId] of selectorRoutes) {
+        if (!selectedRouteIds.has(routeId)) {
+            process.stderr.write(
+                `Error: per-model selector '${selector}' resolves to '${routeId}', which is not a selected participant\n`,
+            );
+            return 2;
+        }
+    }
+
+    const normalizedStances = normalizeModelOptionMap("stance", modelStances, selectorRoutes);
+    if (!normalizedStances.ok) {
+        process.stderr.write(`${normalizedStances.error.message}\n`);
+        return 2;
+    }
+    modelStances = normalizedStances.value;
+
+    const normalizedThinkingModes = normalizeModelOptionMap("thinking mode", modelThinkingModes, selectorRoutes);
+    if (!normalizedThinkingModes.ok) {
+        process.stderr.write(`${normalizedThinkingModes.error.message}\n`);
+        return 2;
+    }
+    modelThinkingModes = normalizedThinkingModes.value;
+
+    const normalizedTemperatures = normalizeModelOptionMap("temperature", modelTemperatures, selectorRoutes);
+    if (!normalizedTemperatures.ok) {
+        process.stderr.write(`${normalizedTemperatures.error.message}\n`);
+        return 2;
+    }
+    modelTemperatures = normalizedTemperatures.value;
+
     let resolvedSynthesisRouteId: string | undefined;
     let unresolvedSynthesisError: ParticipantError | null = null;
     if (synthesisModel) {
@@ -484,7 +558,7 @@ export const runConsensusCommand = async (args: string[]) => {
         participantContextWindows.length > 0 ? Math.min(...participantContextWindows) : undefined;
 
     const models = resolved.map((info) => ({
-        model: info.route_id,
+        model_id: info.route_id,
         stance: modelStances[info.route_id],
         temperature: modelTemperatures[info.route_id],
         thinking_mode: modelThinkingModes[info.route_id],

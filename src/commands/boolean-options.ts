@@ -1,10 +1,4 @@
-export type BooleanTokenValidation =
-    | { ok: true; separatorPresent: boolean }
-    | {
-          ok: false;
-          option: string;
-          token: string;
-      };
+import type { BooleanTokenValidation } from "@/types/boolean-options";
 
 /**
  * Validates the long-form syntax of declared boolean options before minimist
@@ -30,15 +24,9 @@ export const validateKnownBooleanTokens = (
         const equalsIndex = optionAndValue.indexOf("=");
         const optionName = equalsIndex === -1 ? optionAndValue : optionAndValue.slice(0, equalsIndex);
 
-        if (!knownOptions.has(optionName)) {
-            continue;
-        }
-        if (negated && equalsIndex !== -1) {
-            return { ok: false, option: `--no-${optionName}`, token };
-        }
-        if (equalsIndex === -1) {
-            continue;
-        }
+        if (!knownOptions.has(optionName)) continue;
+        if (negated && equalsIndex !== -1) return { ok: false, option: `--no-${optionName}`, token };
+        if (equalsIndex === -1) continue;
 
         const assignedValue = optionAndValue.slice(equalsIndex + 1);
         if (assignedValue !== "true" && assignedValue !== "false") {

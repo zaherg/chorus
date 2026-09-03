@@ -40,8 +40,8 @@ describe("loadConfig", () => {
         const writtenConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
 
         expect(config).toMatchObject({
-            cli_timeout_ms: 30_000,
-            provider_timeout_ms: 120_000,
+            cli_timeout_ms: 2_700_000,
+            provider_timeout_ms: 1_800_000,
             log_level: "info",
             max_concurrent_processes: 3,
         });
@@ -62,6 +62,8 @@ describe("loadConfig", () => {
             ].sort(),
         );
         expect(writtenConfig).toMatchObject({
+            cli_timeout_ms: 2_700_000,
+            provider_timeout_ms: 1_800_000,
             openrouter_api_key: "",
             custom_url: "",
             allow_insecure_custom: false,
@@ -94,7 +96,7 @@ describe("loadConfig", () => {
 
         expect(config).toMatchObject({
             cli_timeout_ms: 60_000,
-            provider_timeout_ms: 120_000,
+            provider_timeout_ms: 1_800_000,
             log_level: "debug",
             openrouter_api_key: "sk-openrouter-key",
         });
@@ -124,6 +126,7 @@ describe("loadConfig", () => {
 
         try {
             const config = await loadConfig();
+            expect(config.cli_timeout_ms).toBe(2_700_000);
             expect(config.openrouter_api_key).toBe("resolved-value");
             expect(config.anthropic_api_key).toBe(`$${unresolvedName}`);
         } finally {

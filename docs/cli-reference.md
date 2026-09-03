@@ -50,16 +50,33 @@ The `--` separator and every argument following it are rejected.
 
 ### `--models` semantics
 
-`--models` accepts exact provider-qualified `route_id` values returned by `consensus list-models --json`. Example:
+`--models` accepts exact provider-qualified `route_id` values returned by `consensus list-models --json`.
+For example:
 
 ```bash
 consensus --models "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5,google-vertex/gemini-2.5-pro" \
   --prompt "Should we use a monorepo or polyrepo?"
 ```
 
-Bare provider-native IDs (for example `gpt-5.2`) are accepted only when exactly one configured provider exposes that exact provider-native model ID. The CLI never suffix-matches model IDs. When two or more configured providers expose the same provider-native ID, the broker returns a structured ambiguity response listing candidate `route_id` values; it does not choose. Use provider-prefixed IDs to disambiguate.
+Bare provider-native IDs, such as `gemini-2.5-pro`, are accepted only when exactly one configured catalog-backed provider exposes that exact `provider_model_id`.
+The CLI never suffix-matches model IDs and never chooses a provider automatically.
+When two or more configured catalog-backed providers expose the same `provider_model_id`, the broker returns a structured ambiguity response listing candidate `route_id` values.
+Use an exact provider-qualified `route_id` to disambiguate.
 
-For `passthrough` providers (`custom`), the CLI accepts provider-prefixed IDs (for example `custom/local-model`) only when the model is known to the agent or supplied explicitly by the user.
+For `passthrough` providers (`custom`), the CLI accepts provider-prefixed IDs, such as `custom/local-model`, only when the model is known to the agent or supplied explicitly by the user.
+
+### Per-model selector semantics
+
+The `<model>` value for `--stance`, `--thinking-mode`, and `--temperature-model` accepts an exact `route_id` or a uniquely resolved bare `provider_model_id`.
+The keys in stdin `stances`, `thinking_modes`, and `temperatures` use the same selector rules.
+A bare selector, such as `gemini-2.5-pro`, requires an exact unique `provider_model_id` match across all configured catalog-backed providers.
+No suffix matching or automatic provider choice occurs.
+The selected participant list does not disambiguate a globally ambiguous bare selector.
+After global resolution, every per-model selector must identify a selected participant.
+Unknown or ambiguous selectors stop with a structured model-resolution error and exit code `3`.
+Resolved but unselected selectors and conflicting assignments stop with a request-validation error on stderr and exit code `2`.
+Equal assignments through different aliases are accepted, while conflicting assignments to the same route and field are rejected.
+When `--stdin-json` is active, the stdin maps own per-model values and CLI per-model flags are inactive.
 
 ### OUTPUT
 
@@ -147,14 +164,19 @@ When `--stdin-json` is used, pipe a JSON object:
 }
 ```
 
+The `stances`, `thinking_modes`, and `temperatures` keys use the per-model selector rules above.
+CLI per-model flags remain inactive in stdin mode.
+If reading stdin fails, the command writes the original cause to stderr, leaves stdout empty, discards partial input, and exits with code `1` without parsing the partial content.
+Completed malformed JSON or schema-invalid content exits with code `2`.
+
 ### EXIT CODES
 
 | Code | Meaning |
 |---|---|
 | 0 | Success (at least one participant response collected) |
-| 1 | Broker error (config load, all participants failed, or unrecoverable catalog error) |
-| 2 | Argument parse error or invalid stdin JSON |
-| 3 | Model resolution error (ambiguous unqualified input, unknown `route_id`, or no providers configured) |
+| 1 | Operational or broker error, including stdin read failure, config load failure, all participant failures, or unrecoverable catalog failure |
+| 2 | Argument or request-validation error, including completed malformed JSON or schema-invalid stdin content |
+| 3 | Model resolution error (ambiguous or unknown participant or per-model selector, or no providers configured) |
 
 ## `consensus list-models`
 

@@ -1,6 +1,6 @@
 import type { ProviderRegistry, ThinkingMode } from "@/providers/registry";
+import type { EmbeddedFileResult } from "@/types/files";
 import type { ModelsListResponse, ProviderId } from "@/types/providers";
-import type { EmbeddedFileResult } from "@/utils/files";
 
 // === Consensus primitives ===
 
@@ -21,7 +21,7 @@ export interface ConsensusModelConfig {
      * `"anthropic/claude-sonnet-4-5"`). Resolved by the broker to a
      * `BrokerModelInfo`; the registry then uses the provider-native model ID.
      */
-    model: string;
+    model_id: string;
     /**
      * Optional forced stance. When set the model is instructed to argue from
      * this position. When absent the model chooses its stance freely.

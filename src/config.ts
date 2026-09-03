@@ -14,8 +14,8 @@ const supportsPosixModes = process.platform !== "win32";
 
 const ChorusConfigSchema = z
     .object({
-        cli_timeout_ms: z.coerce.number().default(30_000),
-        provider_timeout_ms: z.coerce.number().default(120_000),
+        cli_timeout_ms: z.coerce.number().default(2_700_000),
+        provider_timeout_ms: z.coerce.number().default(1_800_000),
         log_level: z.enum(["debug", "info", "warn", "error"]).default("info"),
         max_concurrent_processes: z.coerce.number().default(3),
         anthropic_api_key: z.string().optional(),
@@ -25,7 +25,7 @@ const ChorusConfigSchema = z
         google_vertex_api_key: z.string().optional(),
         custom_api_key: z.string().optional(),
         custom_url: z.string().optional(),
-        allow_insecure_custom: z.boolean().optional(),
+        allow_insecure_custom: z.boolean().optional().default(false),
     })
     .refine(
         (data) => {
@@ -39,7 +39,7 @@ const ChorusConfigSchema = z
 
             return true;
         },
-        { message: "Both custom_url and custom_api_key should be set." },
+        { message: "Both url and api key should be set.", path: ["custom_url", "custom_api_key"] },
     );
 
 export type ChorusConfig = z.infer<typeof ChorusConfigSchema>;
@@ -77,8 +77,8 @@ const resolveEnvVars = (raw: Record<string, unknown>) => {
 };
 
 const DEFAULT_CONFIG = {
-    cli_timeout_ms: 30_000,
-    provider_timeout_ms: 120_000,
+    cli_timeout_ms: 2_700_000,
+    provider_timeout_ms: 1_800_000,
     log_level: "info",
     max_concurrent_processes: 3,
     anthropic_api_key: "",

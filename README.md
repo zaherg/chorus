@@ -106,8 +106,8 @@ Optional settings:
 
 | Setting | Default | Description |
 |---|---|---|
-| `cli_timeout_ms` | 30000 | Timeout for the entire CLI invocation |
-| `provider_timeout_ms` | 120000 | Timeout per individual provider request |
+| `cli_timeout_ms` | 2700000 | Timeout for the entire CLI invocation |
+| `provider_timeout_ms` | 1800000 | Timeout per individual provider request |
 | `log_level` | "info" | One of: "debug", "info", "warn", "error" |
 | `max_concurrent_processes` | 3 | Maximum parallel provider requests |
 | `allow_insecure_custom` | false | Allow HTTP (not HTTPS) custom API URLs |
@@ -117,8 +117,8 @@ Optional settings:
 | Code | Meaning |
 |---|---|
 | 0 | Success (at least one participant response collected) |
-| 1 | Broker error (config load, all participants failed, or unrecoverable catalog error) |
-| 2 | Argument parse error or invalid stdin JSON |
+| 1 | Operational or broker error, including stdin read failure |
+| 2 | Argument or request-validation error, including completed invalid stdin content |
 | 3 | Model resolution error (ambiguous or unknown `route_id`, or no providers configured) |
 
 ## Agent Skills
@@ -162,7 +162,7 @@ The CLI reads its version from `package.json` at build time.
 
 | Symptom | Likely cause |
 |---|---|
-| Exit code 1 | Config load failure, catalog unavailable, or all providers failed |
+| Exit code 1 | Stdin read failure, config load failure, catalog unavailable, or all providers failed |
 | Exit code 3 | No providers configured or `route_id` is ambiguous |
 | Provider timeouts | Increase `provider_timeout_ms` in config |
 | "No API key configured" | Add the required key to `~/.config/chorus/config.json` |

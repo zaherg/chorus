@@ -10,8 +10,8 @@ Created on first run with sensible defaults (API keys are empty). On POSIX syste
 
 ```json
 {
-  "cli_timeout_ms": 30000,
-  "provider_timeout_ms": 120000,
+  "cli_timeout_ms": 2700000,
+  "provider_timeout_ms": 1800000,
   "log_level": "info",
   "max_concurrent_processes": 3,
   "openrouter_api_key": "",
@@ -29,8 +29,8 @@ Created on first run with sensible defaults (API keys are empty). On POSIX syste
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `cli_timeout_ms` | integer | `30000` | Overall CLI timeout for the consensus run |
-| `provider_timeout_ms` | integer | `120000` | Per-provider API call timeout |
+| `cli_timeout_ms` | integer | `2700000` | Overall CLI timeout for the consensus run |
+| `provider_timeout_ms` | integer | `1800000` | Per-provider API call timeout |
 | `log_level` | string | `"info"` | Logging level: `debug`, `info`, `warn`, `error` |
 | `max_concurrent_processes` | integer | `3` | Max concurrent provider calls in parallel mode |
 | `allow_insecure_custom` | boolean | `false` | Set to `true` to allow insecure custom provider URLs |

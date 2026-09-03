@@ -6,7 +6,7 @@ import type {
     ConsensusResult,
     ParticipantResponse,
 } from "@/types/consensus";
-import type { EmbeddedFileResult } from "@/utils/files";
+import type { EmbeddedFileResult } from "@/types/files";
 import { embedFiles } from "@/utils/files";
 import { getErrorMessage } from "@/utils/helpers";
 import { logger } from "@/utils/logger";
@@ -30,7 +30,7 @@ const queryModel = async ({
     fileText: string;
     priorResponses?: ParticipantResponse[];
 }): Promise<ParticipantResponse> => {
-    const modelId = modelConfig.model;
+    const modelId = modelConfig.model_id;
     const stance = modelConfig.stance ?? "neutral";
     const modelInfo = await request.providerRegistry.getModelInfo(modelId, {
         catalog: request.catalog,
@@ -58,12 +58,11 @@ const queryModel = async ({
         fileText,
         priorResponses,
     });
-    const temperature = modelConfig.temperature ?? request.temperature;
     const result = await request.providerRegistry.generateText(modelInfo.route_id, prompt, CONSENSUS_SYSTEM_PROMPT, {
         abortSignal: request.abortSignal,
         catalog: request.catalog,
         configuredProviders: request.configuredProviders,
-        temperature,
+        temperature: modelConfig.temperature ?? request.temperature,
         thinkingMode: modelConfig.thinking_mode,
     });
 
@@ -92,6 +91,19 @@ const queryModel = async ({
     };
 };
 
+/**
+ * Executes `worker` for each item with bounded concurrency and returns all outcomes.
+ *
+ * The function runs up to `maxConcurrency` workers in parallel while preserving
+ * the input ordering in the returned results array. The concurrency is clamped to
+ * at least 1 and at most `items.length`.
+ *
+ * @param items - Input items to process.
+ * @param maxConcurrency - Maximum number of concurrent worker executions.
+ * @param worker - Async function invoked with `(item, index)`.
+ * @returns An array of `PromiseSettledResult<R>` entries in the same order as `items`,
+ * with each entry either fulfilled with the worker result or rejected with the thrown reason.
+ */
 const runSettledWithConcurrency = async <T, R>(
     items: T[],
     maxConcurrency: number,
@@ -157,6 +169,22 @@ const failedParticipant = (modelId: string, reason: unknown): ParticipantRespons
     };
 };
 
+/**
+ * Runs consensus across configured models and optionally synthesizes the combined result.
+ *
+ * - Returns an early validation failure if no models are provided.
+ * - Optionally embeds relevant files once and reuses the embedded text for every model query.
+ * - In parallel mode, dispatches model queries with bounded concurrency and records each
+ *   success or failure as a `ParticipantResponse`.
+ * - In sequential mode, queries models one by one, checks abort state between iterations,
+ *   and forwards prior successful responses into each subsequent request.
+ * - Fails with `ok: false` when all participant calls fail.
+ * - If a synthesis model is configured, it resolves that route and requests a synthesis
+ *   response from successful participant outputs.
+ *
+ * @param request Consensus request parameters, including model list, execution mode, provider access, and optional synthesis settings.
+ * @returns A `ConsensusResult` on successful orchestration or a `ConsensusError` for terminal failure conditions.
+ */
 export const runConsensus = async (request: ConsensusRequest): Promise<ConsensusResult | ConsensusError> => {
     if (request.models.length === 0) {
         return {
@@ -188,7 +216,7 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
             if (r.status === "fulfilled") {
                 participantResponses.push(r.value);
             } else {
-                participantResponses.push(failedParticipant(request.models[i].model, r.reason));
+                participantResponses.push(failedParticipant(request.models[i].model_id, r.reason));
             }
         }
     } else {
@@ -197,7 +225,7 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
             // cancelled consensus run does not fire every remaining
             // model call.
             if (request.abortSignal?.aborted) {
-                participantResponses.push(failedParticipant(modelConfig.model, "Aborted"));
+                participantResponses.push(failedParticipant(modelConfig.model_id, "Aborted"));
                 continue;
             }
 
@@ -210,11 +238,11 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
                     priorResponses,
                 });
                 if (response.error) {
-                    logger?.warn(`Model ${modelConfig.model} failed: ${response.error.message}`);
+                    logger?.warn(`Model ${modelConfig.model_id} failed: ${response.error.message}`);
                 }
                 participantResponses.push(response);
             } catch (e) {
-                participantResponses.push(failedParticipant(modelConfig.model, e));
+                participantResponses.push(failedParticipant(modelConfig.model_id, e));
             }
         }
     }

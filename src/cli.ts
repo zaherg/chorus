@@ -70,6 +70,17 @@ CONSENSUS USAGE:
     --stdin-json                            Read full request as JSON from stdin
     --schema                                Print output JSON schema and exit
 
+PER-MODEL SELECTORS:
+  <model> is an exact route_id or a uniquely resolved bare provider_model_id.
+  Bare IDs require an exact unique provider_model_id match across all configured catalog-backed providers.
+  No suffix matching or automatic provider choice.
+  The selected participant list does not disambiguate a globally ambiguous bare selector.
+  A selector must resolve to a selected participant.
+  Unknown or ambiguous selectors return structured code 3 errors.
+  Unselected or conflicting selectors return request-validation code 2 errors.
+  Equal aliases are accepted; conflicting aliases are rejected.
+  In --stdin-json mode, stdin maps own per-model values and CLI per-model flags are inactive.
+
 LIST-MODELS USAGE:
   consensus list-models [filter] [--json] [--refresh] [--help]
     [filter]       Optional case-insensitive substring over route_id,
@@ -82,8 +93,9 @@ CONFIG:
 
 EXIT CODES:
   0  Success
-  1  Consensus error
-  2  Argument parse error
+  1  Consensus or operational error, including stdin read failures
+  2  Argument or request-validation error, including completed invalid stdin input
+     (malformed JSON or schema-invalid content)
   3  Model resolution error
 `;
     process.stdout.write(help);

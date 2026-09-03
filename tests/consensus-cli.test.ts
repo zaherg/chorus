@@ -128,12 +128,82 @@ const stubDefaults = (): void => {
     stubRunConsensus(defaultConsensusImpl);
 };
 
+const stubDownstreamWorkCounters = () => {
+    const counters = {
+        configLoad: 0,
+        catalogLoad: 0,
+        routeWork: 0,
+        consensus: 0,
+    };
+    mock.module("@/config", () => ({
+        loadConfig: async () => {
+            counters.configLoad += 1;
+            return testConfig();
+        },
+    }));
+    mock.module("@/providers/model-catalog", () => ({
+        loadCatalog: async () => {
+            counters.catalogLoad += 1;
+            const response = fixtureModels();
+            return {
+                ok: true as const,
+                schema: response.schema,
+                cache: response.cache,
+                providers: response.providers,
+            };
+        },
+    }));
+    mock.module("@/providers/resolve-route", () => ({
+        classifyInput: (input: string) => {
+            counters.routeWork += 1;
+            return input.includes("/")
+                ? { kind: "exact_route_id" as const, route_id: input }
+                : { kind: "unqualified" as const, providerModelId: input };
+        },
+        resolveRoute: async () => {
+            counters.routeWork += 1;
+            throw new Error("route resolution must not run");
+        },
+    }));
+    stubRunConsensus(async () => {
+        counters.consensus += 1;
+        return defaultConsensusImpl();
+    });
+    return counters;
+};
+
+const stubRouteResolver = (resolveInput: (input: string) => object) => {
+    const classificationCounts = new Map<string, number>();
+    const resolutionCounts = new Map<string, number>();
+    mock.module("@/providers/resolve-route", () => ({
+        classifyInput: (input: string) => {
+            classificationCounts.set(input, (classificationCounts.get(input) ?? 0) + 1);
+            return input.includes("/")
+                ? { kind: "exact_route_id" as const, route_id: input }
+                : { kind: "unqualified" as const, providerModelId: input };
+        },
+        resolveRoute: async (input: {
+            kind: "exact_route_id" | "unqualified";
+            route_id?: string;
+            providerModelId?: string;
+        }) => {
+            const rawInput = input.kind === "exact_route_id" ? input.route_id : input.providerModelId;
+            if (rawInput === undefined) {
+                throw new Error("Expected classified route input");
+            }
+            resolutionCounts.set(rawInput, (resolutionCounts.get(rawInput) ?? 0) + 1);
+            return resolveInput(rawInput);
+        },
+    }));
+    return { classificationCounts, resolutionCounts };
+};
+
 const mockStdin = async (
     run: () => Promise<number>,
-    input: string,
+    input: string | Readable,
 ): Promise<{ result: number; stderr: string; stdout: string }> => {
-    const stream = Readable.from(Buffer.from(input));
-    const original = process.stdin;
+    const stream = typeof input === "string" ? Readable.from([Buffer.from(input)]) : input;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
     Object.defineProperty(process, "stdin", {
         value: stream,
         writable: true,
@@ -142,11 +212,11 @@ const mockStdin = async (
     try {
         return await captureOutput(run);
     } finally {
-        Object.defineProperty(process, "stdin", {
-            value: original,
-            writable: true,
-            configurable: true,
-        });
+        if (originalDescriptor) {
+            Object.defineProperty(process, "stdin", originalDescriptor);
+        } else {
+            delete (process as { stdin?: NodeJS.ReadStream }).stdin;
+        }
         stream.destroy();
     }
 };
@@ -442,13 +512,13 @@ describe("runConsensusCommand", () => {
             relevantFiles: ["a.ts", "b.ts"],
             models: [
                 {
-                    model: "openrouter/openai/gpt-5.2",
+                    model_id: "openrouter/openai/gpt-5.2",
                     stance: "for",
                     thinking_mode: "high",
                     temperature: 0.5,
                 },
                 {
-                    model: "google-vertex/gemini-2.5-pro",
+                    model_id: "google-vertex/gemini-2.5-pro",
                     stance: "against",
                     thinking_mode: "low",
                     temperature: 0.75,
@@ -466,10 +536,13 @@ describe("runConsensusCommand", () => {
         });
 
         const input = JSON.stringify({
-            models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+            models: ["openrouter/openai/gpt-5.2", "gemini-2.5-pro"],
             prompt: "stdin prompt",
             temperature: 0.4,
             files: ["stdin.ts"],
+            stances: { "gemini-2.5-pro": "for" },
+            thinking_modes: { "gemini-2.5-pro": "high" },
+            temperatures: { "gemini-2.5-pro": 0.6 },
         });
         const { result } = await mockStdin(
             () =>
@@ -504,7 +577,15 @@ describe("runConsensusCommand", () => {
             temperature: 0.4,
             relevantFiles: ["stdin.ts"],
             synthesisModel: "anthropic/claude-sonnet-4-5",
-            models: [{ model: "openrouter/openai/gpt-5.2" }, { model: "google-vertex/gemini-2.5-pro" }],
+            models: [
+                { model_id: "openrouter/openai/gpt-5.2" },
+                {
+                    model_id: "google-vertex/gemini-2.5-pro",
+                    stance: "for",
+                    thinking_mode: "high",
+                    temperature: 0.6,
+                },
+            ],
         });
     });
 
@@ -618,9 +699,481 @@ describe("runConsensusCommand", () => {
         expect(catalogLoadCount).toBe(0);
     });
 
+    it("applies all CLI per-model fields from a uniquely resolved bare selector", async () => {
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+
+        const { result } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "gemini-2.5-pro,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--stance",
+                "gemini-2.5-pro=for",
+                "--thinking-mode",
+                "gemini-2.5-pro=high",
+                "--temperature-model",
+                "gemini-2.5-pro=0.6",
+            ]),
+        );
+
+        expect(result).toBe(0);
+        expect(receivedRequest).toMatchObject({
+            models: [
+                {
+                    model_id: "google-vertex/gemini-2.5-pro",
+                    stance: "for",
+                    thinking_mode: "high",
+                    temperature: 0.6,
+                },
+                { model_id: "openrouter/openai/gpt-5.2" },
+            ],
+        });
+    });
+
+    it("applies a canonical selector to a participant selected by bare ID", async () => {
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+
+        const { result } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "gemini-2.5-pro,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--stance",
+                "google-vertex/gemini-2.5-pro=against",
+            ]),
+        );
+
+        expect(result).toBe(0);
+        expect(receivedRequest).toMatchObject({
+            models: [
+                { model_id: "google-vertex/gemini-2.5-pro", stance: "against" },
+                { model_id: "openrouter/openai/gpt-5.2" },
+            ],
+        });
+    });
+
+    it("accepts equal CLI bare and canonical aliases for string and numeric values", async () => {
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+
+        const { result } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "gemini-2.5-pro,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--stance",
+                "gemini-2.5-pro=for",
+                "--stance",
+                "google-vertex/gemini-2.5-pro=for",
+                "--temperature-model",
+                "gemini-2.5-pro=0.6",
+                "--temperature-model",
+                "google-vertex/gemini-2.5-pro=0.6",
+            ]),
+        );
+
+        expect(result).toBe(0);
+        expect(receivedRequest).toMatchObject({
+            models: [
+                {
+                    model_id: "google-vertex/gemini-2.5-pro",
+                    stance: "for",
+                    temperature: 0.6,
+                },
+                { model_id: "openrouter/openai/gpt-5.2" },
+            ],
+        });
+    });
+
+    it("rejects conflicting CLI bare and canonical aliases for string and numeric values", async () => {
+        const cases = [
+            {
+                flags: ["--stance", "gemini-2.5-pro=for", "--stance", "google-vertex/gemini-2.5-pro=against"],
+                field: "stance",
+            },
+            {
+                flags: [
+                    "--temperature-model",
+                    "gemini-2.5-pro=0.4",
+                    "--temperature-model",
+                    "google-vertex/gemini-2.5-pro=0.6",
+                ],
+                field: "temperature",
+            },
+        ];
+
+        for (const { flags, field } of cases) {
+            stubDefaults();
+            let consensusCallCount = 0;
+            stubRunConsensus(async () => {
+                consensusCallCount += 1;
+                return defaultConsensusImpl();
+            });
+
+            const { result, stderr, stdout } = await captureOutput(() =>
+                runConsensusCommand([
+                    "--models",
+                    "gemini-2.5-pro,openrouter/openai/gpt-5.2",
+                    "--prompt",
+                    "test",
+                    ...flags,
+                ]),
+            );
+
+            expect(result).toBe(2);
+            expect(stdout).toBe("");
+            expect(stderr).toContain(field);
+            expect(stderr).toContain("google-vertex/gemini-2.5-pro");
+            expect(consensusCallCount).toBe(0);
+        }
+    });
+
+    it("accepts equal stdin bare and canonical aliases for string and numeric values", async () => {
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+
+        const input = JSON.stringify({
+            models: ["gemini-2.5-pro", "openrouter/openai/gpt-5.2"],
+            prompt: "test",
+            stances: {
+                "gemini-2.5-pro": "for",
+                "google-vertex/gemini-2.5-pro": "for",
+            },
+            temperatures: {
+                "gemini-2.5-pro": 0.6,
+                "google-vertex/gemini-2.5-pro": 0.6,
+            },
+        });
+        const { result } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), input);
+
+        expect(result).toBe(0);
+        expect(receivedRequest).toMatchObject({
+            models: [
+                {
+                    model_id: "google-vertex/gemini-2.5-pro",
+                    stance: "for",
+                    temperature: 0.6,
+                },
+                { model_id: "openrouter/openai/gpt-5.2" },
+            ],
+        });
+    });
+
+    it("rejects conflicting stdin bare and canonical aliases for string and numeric values", async () => {
+        const cases = [
+            {
+                field: "stances",
+                values: {
+                    "gemini-2.5-pro": "for",
+                    "google-vertex/gemini-2.5-pro": "against",
+                },
+                errorField: "stance",
+            },
+            {
+                field: "temperatures",
+                values: {
+                    "gemini-2.5-pro": 0.4,
+                    "google-vertex/gemini-2.5-pro": 0.6,
+                },
+                errorField: "temperature",
+            },
+        ];
+
+        for (const { field, values, errorField } of cases) {
+            stubDefaults();
+            let consensusCallCount = 0;
+            stubRunConsensus(async () => {
+                consensusCallCount += 1;
+                return defaultConsensusImpl();
+            });
+            const input = JSON.stringify({
+                models: ["gemini-2.5-pro", "openrouter/openai/gpt-5.2"],
+                prompt: "test",
+                [field]: values,
+            });
+
+            const { result, stderr, stdout } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), input);
+
+            expect(result).toBe(2);
+            expect(stdout).toBe("");
+            expect(stderr).toContain(errorField);
+            expect(stderr).toContain("google-vertex/gemini-2.5-pro");
+            expect(consensusCallCount).toBe(0);
+        }
+    });
+
+    it("returns structured code 3 for an unknown per-model selector", async () => {
+        stubDefaults();
+        let consensusCallCount = 0;
+        stubRunConsensus(async () => {
+            consensusCallCount += 1;
+            return defaultConsensusImpl();
+        });
+
+        const { result, stderr, stdout } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                "--prompt",
+                "test",
+                "--stance",
+                "missing=for",
+            ]),
+        );
+
+        expect(result).toBe(3);
+        expect(stderr).toBe("");
+        const payload = JSON.parse(stdout);
+        expect(payload.schema).toBe("cli.consensus.error/1");
+        expect(payload.error.code).toBe("unknown_model");
+        expect(payload.error.input).toBe("missing");
+        expect(consensusCallCount).toBe(0);
+    });
+
+    it("rejects a resolved per-model selector for an unselected participant", async () => {
+        stubDefaults();
+        let consensusCallCount = 0;
+        stubRunConsensus(async () => {
+            consensusCallCount += 1;
+            return defaultConsensusImpl();
+        });
+
+        const { result, stderr, stdout } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                "--prompt",
+                "test",
+                "--stance",
+                "claude-sonnet-4-5=for",
+            ]),
+        );
+
+        expect(result).toBe(2);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("claude-sonnet-4-5");
+        expect(stderr).toContain("anthropic/claude-sonnet-4-5");
+        expect(stderr).toContain("selected participant");
+        expect(consensusCallCount).toBe(0);
+    });
+
+    it("keeps a bare per-model selector globally ambiguous when only one matching route is selected", async () => {
+        const baseCatalog = fixtureModels();
+        const googleEntry = baseCatalog.providers["google-vertex"];
+        const anthropicEntry = baseCatalog.providers.anthropic;
+        if (googleEntry.status !== "catalog" || anthropicEntry.status !== "catalog") {
+            throw new Error("Expected catalog-backed fixture providers");
+        }
+        const sharedGoogle = BrokerModelInfoSchema.parse({
+            route_id: "google-vertex/shared",
+            provider: "google-vertex",
+            provider_model_id: "shared",
+            display_name: "Shared Google model",
+        });
+        const sharedAnthropic = BrokerModelInfoSchema.parse({
+            route_id: "anthropic/shared",
+            provider: "anthropic",
+            provider_model_id: "shared",
+            display_name: "Shared Anthropic model",
+        });
+        stubCatalog({
+            ...baseCatalog,
+            providers: {
+                ...baseCatalog.providers,
+                "google-vertex": {
+                    ...googleEntry,
+                    models: [...googleEntry.models, sharedGoogle],
+                },
+                anthropic: {
+                    ...anthropicEntry,
+                    models: [...anthropicEntry.models, sharedAnthropic],
+                },
+            },
+        });
+        stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
+        let consensusCallCount = 0;
+        stubRunConsensus(async () => {
+            consensusCallCount += 1;
+            return defaultConsensusImpl();
+        });
+
+        const { result, stderr, stdout } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "google-vertex/shared,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--stance",
+                "shared=for",
+            ]),
+        );
+
+        expect(result).toBe(3);
+        expect(stderr).toBe("");
+        const payload = JSON.parse(stdout);
+        expect(payload.error.code).toBe("ambiguous_model");
+        expect(payload.error.input).toBe("shared");
+        expect(payload.error.candidates).toEqual(["anthropic/shared", "google-vertex/shared"]);
+        expect(consensusCallCount).toBe(0);
+    });
+
+    it("returns structured code 3 for a special-key selector", async () => {
+        stubDefaults();
+        let consensusCallCount = 0;
+        stubRunConsensus(async () => {
+            consensusCallCount += 1;
+            return defaultConsensusImpl();
+        });
+
+        const { result, stderr, stdout } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                "--prompt",
+                "test",
+                "--stance",
+                "__proto__=for",
+            ]),
+        );
+
+        expect(result).toBe(3);
+        expect(stderr).toBe("");
+        const payload = JSON.parse(stdout);
+        expect(payload.schema).toBe("cli.consensus.error/1");
+        expect(payload.error.code).toBe("unknown_model");
+        expect(payload.error.input).toBe("__proto__");
+        expect(consensusCallCount).toBe(0);
+    });
+
+    it("rejects conflicting repeated assignments for a special-key selector", async () => {
+        stubDefaults();
+        let consensusCallCount = 0;
+        stubRunConsensus(async () => {
+            consensusCallCount += 1;
+            return defaultConsensusImpl();
+        });
+
+        const { result, stderr, stdout } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                "--prompt",
+                "test",
+                "--stance",
+                "__proto__=for",
+                "--stance",
+                "__proto__=against",
+            ]),
+        );
+
+        expect(result).toBe(2);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("--stance");
+        expect(stderr).toContain("__proto__");
+        expect(consensusCallCount).toBe(0);
+    });
+
+    it("accepts equal repeated raw CLI selectors and rejects conflicting repeats", async () => {
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+
+        const equal = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "gemini-2.5-pro,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--stance",
+                "gemini-2.5-pro=for",
+                "--stance",
+                "gemini-2.5-pro=for",
+            ]),
+        );
+        expect(equal.result).toBe(0);
+        expect(receivedRequest).toMatchObject({
+            models: [
+                { model_id: "google-vertex/gemini-2.5-pro", stance: "for" },
+                { model_id: "openrouter/openai/gpt-5.2" },
+            ],
+        });
+
+        stubDefaults();
+        let conflictCallCount = 0;
+        stubRunConsensus(async () => {
+            conflictCallCount += 1;
+            return defaultConsensusImpl();
+        });
+        const conflict = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "gemini-2.5-pro,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--stance",
+                "gemini-2.5-pro=for",
+                "--stance",
+                "gemini-2.5-pro=against",
+            ]),
+        );
+        expect(conflict.result).toBe(2);
+        expect(conflict.stdout).toBe("");
+        expect(conflict.stderr).toContain("--stance");
+        expect(conflict.stderr).toContain("gemini-2.5-pro");
+        expect(conflictCallCount).toBe(0);
+    });
+
+    it("accepts valid stdin JSON split across multiple chunks and restores the stdin descriptor", async () => {
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+        const originalDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+        const input = JSON.stringify({
+            models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+            prompt: "multi-chunk",
+        });
+        const midpoint = Math.floor(input.length / 2);
+        const stream = Readable.from([Buffer.from(input.slice(0, midpoint)), Buffer.from(input.slice(midpoint))]);
+
+        const { result, stderr } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), stream);
+
+        expect(result).toBe(0);
+        expect(stderr).toBe("");
+        expect(receivedRequest).toMatchObject({ findings: "multi-chunk", step: "multi-chunk" });
+        expect(Object.getOwnPropertyDescriptor(process, "stdin")).toEqual(originalDescriptor);
+        expect(stream.destroyed).toBe(true);
+    });
+
     it("returns 2 for malformed or undersized --stdin-json", async () => {
         const cases = [
-            { input: "not valid json {", expectedStderr: null },
+            { input: "not valid json {", expectedStderr: "Error: Invalid --stdin-json input:" },
             {
                 input: JSON.stringify({ models: [], prompt: "test" }),
                 expectedStderr: null,
@@ -775,6 +1328,141 @@ describe("runConsensusCommand", () => {
         expect(payload.models).toHaveLength(1);
     });
 
+    it("classifies and resolves one active selector only once across all three maps", async () => {
+        stubDefaults();
+        const googleModel = BrokerModelInfoSchema.parse({
+            route_id: "google-vertex/gemini-2.5-pro",
+            provider: "google-vertex",
+            provider_model_id: "gemini-2.5-pro",
+            display_name: "Gemini 2.5 Pro",
+        });
+        const openrouterModel = BrokerModelInfoSchema.parse({
+            route_id: "openrouter/openai/gpt-5.2",
+            provider: "openrouter",
+            provider_model_id: "openai/gpt-5.2",
+            display_name: "GPT-5.2",
+        });
+        const { classificationCounts, resolutionCounts } = stubRouteResolver((input) => {
+            if (input === "google-vertex/gemini-2.5-pro" || input === "gemini-2.5-pro") {
+                return { ok: true as const, value: googleModel };
+            }
+            if (input === "openrouter/openai/gpt-5.2") {
+                return { ok: true as const, value: openrouterModel };
+            }
+            throw new Error(`Unexpected route input: ${input}`);
+        });
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+
+        const { result } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "google-vertex/gemini-2.5-pro,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--stance",
+                "gemini-2.5-pro=for",
+                "--thinking-mode",
+                "gemini-2.5-pro=high",
+                "--temperature-model",
+                "gemini-2.5-pro=0.6",
+            ]),
+        );
+
+        expect(result).toBe(0);
+        expect(classificationCounts.get("gemini-2.5-pro")).toBe(1);
+        expect(resolutionCounts.get("gemini-2.5-pro")).toBe(1);
+        expect(receivedRequest).toMatchObject({
+            models: [
+                {
+                    model_id: "google-vertex/gemini-2.5-pro",
+                    stance: "for",
+                    thinking_mode: "high",
+                    temperature: 0.6,
+                },
+                { model_id: "openrouter/openai/gpt-5.2" },
+            ],
+        });
+    });
+
+    it("finishes selector resolution before rejecting an earlier unselected selector", async () => {
+        stubDefaults();
+        const googleModel = BrokerModelInfoSchema.parse({
+            route_id: "google-vertex/gemini-2.5-pro",
+            provider: "google-vertex",
+            provider_model_id: "gemini-2.5-pro",
+            display_name: "Gemini 2.5 Pro",
+        });
+        const openrouterModel = BrokerModelInfoSchema.parse({
+            route_id: "openrouter/openai/gpt-5.2",
+            provider: "openrouter",
+            provider_model_id: "openai/gpt-5.2",
+            display_name: "GPT-5.2",
+        });
+        const anthropicModel = BrokerModelInfoSchema.parse({
+            route_id: "anthropic/claude-sonnet-4-5",
+            provider: "anthropic",
+            provider_model_id: "claude-sonnet-4-5",
+            display_name: "Claude Sonnet 4.5",
+        });
+        const { classificationCounts, resolutionCounts } = stubRouteResolver((input) => {
+            if (input === "google-vertex/gemini-2.5-pro") {
+                return { ok: true as const, value: googleModel };
+            }
+            if (input === "openrouter/openai/gpt-5.2") {
+                return { ok: true as const, value: openrouterModel };
+            }
+            if (input === "claude-sonnet-4-5") {
+                return { ok: true as const, value: anthropicModel };
+            }
+            if (input === "shared") {
+                return {
+                    ok: false as const,
+                    error: {
+                        code: "ambiguous_model" as const,
+                        input: "shared",
+                        candidates: ["anthropic/shared", "google-vertex/shared"],
+                        message: "Model 'shared' is exposed by multiple configured providers.",
+                    },
+                };
+            }
+            throw new Error(`Unexpected route input: ${input}`);
+        });
+        let consensusCallCount = 0;
+        stubRunConsensus(async () => {
+            consensusCallCount += 1;
+            return defaultConsensusImpl();
+        });
+
+        const { result, stderr, stdout } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "google-vertex/gemini-2.5-pro,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--stance",
+                "claude-sonnet-4-5=for",
+                "--thinking-mode",
+                "shared=high",
+            ]),
+        );
+
+        expect(result).toBe(3);
+        expect(stderr).toBe("");
+        const payload = JSON.parse(stdout);
+        expect(payload.error.code).toBe("ambiguous_model");
+        expect(payload.error.input).toBe("shared");
+        expect(payload.error.candidates).toEqual(["anthropic/shared", "google-vertex/shared"]);
+        expect(classificationCounts.get("claude-sonnet-4-5")).toBe(1);
+        expect(resolutionCounts.get("claude-sonnet-4-5")).toBe(1);
+        expect(classificationCounts.get("shared")).toBe(1);
+        expect(resolutionCounts.get("shared")).toBe(1);
+        expect(consensusCallCount).toBe(0);
+    });
+
     it("returns 1 when the catalog is unavailable", async () => {
         stubCatalogUnavailable("network unreachable");
         stubConfiguredProviders([]);
@@ -823,6 +1511,52 @@ describe("runConsensusCommand", () => {
         expect(stderr).toContain("Error");
         expect(stderr).toContain("boom");
     });
+
+    it("returns code 1 for an immediate stdin stream error before downstream work", async () => {
+        const counters = stubDownstreamWorkCounters();
+        const originalDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+        const stream = new Readable({
+            read() {
+                this.destroy(new Error("stdin read failed"));
+            },
+        });
+
+        const { result, stderr, stdout } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), stream);
+
+        expect(result).toBe(1);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("stdin read failed");
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
+        expect(counters.routeWork).toBe(0);
+        expect(counters.consensus).toBe(0);
+        expect(Object.getOwnPropertyDescriptor(process, "stdin")).toEqual(originalDescriptor);
+        expect(stream.destroyed).toBe(true);
+    });
+
+    it("returns code 1 for partial stdin followed by a stream error before downstream work", async () => {
+        const counters = stubDownstreamWorkCounters();
+        const originalDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
+        const stream = Readable.from(
+            (async function* () {
+                yield Buffer.from('{"models":["openrouter/openai/gpt-5.2"');
+                throw new Error("stdin interrupted");
+            })(),
+        );
+
+        const { result, stderr, stdout } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), stream);
+
+        expect(result).toBe(1);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("stdin interrupted");
+        expect(stderr).not.toContain("Invalid --stdin-json input");
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
+        expect(counters.routeWork).toBe(0);
+        expect(counters.consensus).toBe(0);
+        expect(Object.getOwnPropertyDescriptor(process, "stdin")).toEqual(originalDescriptor);
+        expect(stream.destroyed).toBe(true);
+    });
 });
 
 describe("runCli", () => {
@@ -833,5 +1567,13 @@ describe("runCli", () => {
         expect(stdout).not.toContain("auto-picked");
         expect(stdout).toContain("skipped when absent");
         expect(stdout).toContain("route_id");
+        expect(stdout).toContain("exact route_id or a uniquely resolved bare provider_model_id");
+        expect(stdout).toContain("exact unique provider_model_id match");
+        expect(stdout).toContain("No suffix matching or automatic provider choice.");
+        expect(stdout).not.toContain("suffix-matched selectors are accepted");
+        expect(stdout).not.toContain("a provider is chosen automatically");
+        expect(stdout).toContain("1  Consensus or operational error, including stdin read failures");
+        expect(stdout).toContain("2  Argument or request-validation error, including completed invalid stdin input");
+        expect(stdout).toContain("malformed JSON or schema-invalid content");
     });
 });

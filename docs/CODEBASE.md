@@ -157,8 +157,8 @@ works.
 
 | Key | Purpose |
 |---|---|
-| `cli_timeout_ms` | Consensus CLI timeout (default 30 000) |
-| `provider_timeout_ms` | Per-provider request timeout (default 120 000) |
+| `cli_timeout_ms` | Consensus CLI timeout (default 2 700 000) |
+| `provider_timeout_ms` | Per-provider request timeout (default 1 800 000) |
 | `log_level` | `"debug" \| "info" \| "warn" \| "error"` (default `"info"`) |
 | `max_concurrent_processes` | Parallel model query limit (default 3) |
 | `openrouter_api_key` | OpenRouter API key |

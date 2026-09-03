@@ -169,8 +169,8 @@ Treat each follow-up as a new consensus invocation and validate its output using
 | Code | Meaning |
 | --- | --- |
 | 0 | At least one participant response was collected. |
-| 1 | Broker error, every participant failed, or the catalog was unavailable. |
-| 2 | Argument parsing failed or stdin JSON was invalid. |
+| 1 | Operational or broker error, including stdin read failure, every participant failing, or catalog unavailability. |
+| 2 | Argument or request validation failed, including completed malformed JSON or schema-invalid stdin content. |
 | 3 | Model resolution failed or no providers were configured. |
 
 For detailed flags and current payload shapes, use:

@@ -159,9 +159,9 @@
 │  ┌────────────────────────────┐  │   │  ┌──────────────────────────┐   │
 │  │       config.json          │  │   │  │  ~/.config/.../logs/     │   │
 │  │                            │  │   │  │                          │   │
-│  │  cli_timeout_ms: 30000    │  │   │  │  error.log  (warn+)      │   │
+│  │  cli_timeout_ms: 2700000  │  │   │  │  error.log  (warn+)      │   │
 │  │  provider_timeout_ms:     │  │   │  │  stderr      (all)       │   │
-│  │    120000                 │  │   │  │                          │   │
+│  │    1800000                │  │   │  │                          │   │
 │  │  log_level: "info"        │  │   │  │  JSON Lines format       │   │
 │  │  max_concurrent: 5        │  │   │  │  Rotating (5MB x 3)      │   │
 │  │                            │  │   │  │  Secret redaction       │   │

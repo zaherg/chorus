@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import { customProviderBaseUrl } from "@/providers/custom-url";
 import { createProviderRegistry } from "@/providers/registry";
@@ -28,7 +28,9 @@ const openrouterCatalog = (): ModelsListResponse => {
 const openrouterConfigured = (): ReadonlySet<ProviderId> => new Set<ProviderId>(["openrouter"]);
 
 describe("ProviderRegistry", () => {
-    afterEach(() => {});
+    afterEach(() => {
+        mock.restore();
+    });
 
     describe("custom provider URL validation", () => {
         test("allows loopback custom provider URLs", async () => {
@@ -194,6 +196,9 @@ describe("ProviderRegistry", () => {
         });
 
         test("adds a provider timeout abort signal to SDK calls", async () => {
+            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
+            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
+            spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
             const calls: Array<Record<string, unknown>> = [];
             const registry = createProviderRegistry(
                 testConfig({
@@ -227,6 +232,67 @@ describe("ProviderRegistry", () => {
             expect(result.ok).toBeTrue();
             expect(calls).toHaveLength(1);
             expect(calls[0]?.abortSignal).toBeInstanceOf(AbortSignal);
+            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1234);
+        });
+
+        test("uses the fallback provider timeout when configured timeout is zero", async () => {
+            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
+            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
+            spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
+            const registry = createProviderRegistry(
+                testConfig({
+                    provider_timeout_ms: 0,
+                    openrouter_api_key: "openrouter-key",
+                }),
+                {
+                    generateTextFn: async () => {
+                        return {
+                            response: {
+                                modelId: "openai/gpt-5.2",
+                                timestamp: new Date("2026-03-10T12:00:00.000Z"),
+                            },
+                            text: "hello back",
+                            usage: {
+                                inputTokens: 12,
+                                outputTokens: 4,
+                                totalTokens: 16,
+                            },
+                        } as never;
+                    },
+                },
+            );
+
+            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
+
+            expect(result.ok).toBeTrue();
+            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1_800_000);
+        });
+
+        test("clears the provider timeout when the SDK call rejects", async () => {
+            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
+            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
+            const clearTimeoutSpy = spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
+            const parentController = new AbortController();
+            const removeEventListenerSpy = spyOn(parentController.signal, "removeEventListener");
+            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                generateTextFn: async () => {
+                    throw new Error("provider rejected");
+                },
+            });
+
+            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                abortSignal: parentController.signal,
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
+
+            expect(result.ok).toBeFalse();
+            expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+            expect(clearTimeoutSpy).toHaveBeenCalledWith(timeoutId);
+            expect(removeEventListenerSpy).toHaveBeenCalledWith("abort", expect.any(Function));
         });
 
         test("maps provider cancellation failures to retryable timeouts", async () => {

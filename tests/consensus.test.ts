@@ -121,7 +121,7 @@ const failResult = (message = "API timeout", retryable = true): Result<GenerateT
 });
 
 const buildRequest = (overrides: {
-    models: Array<{ model: string; stance?: "for" | "against" | "neutral" }>;
+    models: Array<{ model_id: string; stance?: "for" | "against" | "neutral" }>;
     synthesisModel?: string;
     parallel?: boolean;
     maxConcurrency?: number;
@@ -157,8 +157,8 @@ describe("runConsensus", () => {
             providerRegistry: registry,
             ...buildRequest({
                 models: [
-                    { model: "gpt-5.2", stance: "for" },
-                    { model: "gemini-2.5-pro", stance: "against" },
+                    { model_id: "gpt-5.2", stance: "for" },
+                    { model_id: "gemini-2.5-pro", stance: "against" },
                 ],
                 parallel: true,
             }),
@@ -193,7 +193,7 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }],
+                models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
                 parallel: true,
                 synthesisModel: "claude-sonnet-4-20250514",
             }),
@@ -224,7 +224,7 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [{ model: "gpt-5.2" }],
+                models: [{ model_id: "gpt-5.2" }],
                 parallel: true,
             }),
         });
@@ -245,7 +245,7 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }],
+                models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
                 parallel: true,
                 synthesisModel: "claude-sonnet-4-20250514",
             }),
@@ -271,7 +271,7 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }],
+                models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
                 parallel: true,
                 synthesisModel: "claude-sonnet-4-20250514",
             }),
@@ -301,7 +301,7 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }],
+                models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
                 parallel: false,
             }),
         });
@@ -330,7 +330,11 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }, { model: "claude-sonnet-4-20250514" }],
+                models: [
+                    { model_id: "gpt-5.2" },
+                    { model_id: "gemini-2.5-pro" },
+                    { model_id: "claude-sonnet-4-20250514" },
+                ],
                 parallel: true,
                 maxConcurrency: 1,
             }),
@@ -353,7 +357,7 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }],
+                models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
                 parallel: true,
                 abortSignal: controller.signal,
             }),
@@ -377,7 +381,7 @@ describe("runConsensus", () => {
         const result = await runConsensus({
             providerRegistry: registry,
             ...buildRequest({
-                models: [{ model: "gpt-5.2" }, { model: "gemini-2.5-pro" }],
+                models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
                 parallel: false,
                 abortSignal: controller.signal,
             }),

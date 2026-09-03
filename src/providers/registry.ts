@@ -47,7 +47,7 @@ export interface GenerateTextResult {
     };
 }
 
-const DEFAULT_PROVIDER_TIMEOUT_MS = 30_000;
+const DEFAULT_PROVIDER_TIMEOUT_MS = 1_800_000;
 
 const providerTimeoutMs = (config: ChorusConfig) => {
     const raw = config.provider_timeout_ms;
@@ -158,6 +158,43 @@ export type ProviderRegistry = {
         systemPrompt?: string,
         options?: GenerateTextOptions,
     ) => Promise<Result<GenerateTextResult, ToolError>>;
+};
+
+const createProviderAbortSignal = (parent: AbortSignal | undefined, timeoutMs: number) => {
+    const controller = new AbortController();
+    let cleanedUp = false;
+    let parentAbortListener: (() => void) | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = () => {
+        if (cleanedUp) {
+            return;
+        }
+
+        cleanedUp = true;
+        if (timeoutId !== undefined) {
+            clearTimeout(timeoutId);
+        }
+        if (parent && parentAbortListener) {
+            parent.removeEventListener("abort", parentAbortListener);
+        }
+    };
+    const abort = () => {
+        cleanup();
+        controller.abort();
+    };
+
+    timeoutId = setTimeout(abort, timeoutMs);
+    if (parent) {
+        if (parent.aborted) {
+            abort();
+        } else {
+            parentAbortListener = abort;
+            parent.addEventListener("abort", parentAbortListener, { once: true });
+        }
+    }
+
+    return { cleanup, signal: controller.signal };
 };
 
 export const createProviderRegistry = (
@@ -312,45 +349,29 @@ export const createProviderRegistry = (
             const provider = await getProviderFactory(modelInfo.provider);
             const model = provider.languageModel(modelInfo.provider_model_id);
             const providerOptions = buildProviderOptions(modelInfo.provider, options.thinkingMode);
-            const abortSignal = (() => {
-                const controller = new AbortController();
-                const timeoutMs = providerTimeoutMs(config);
-                const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-                const parent = options.abortSignal;
+            const abortSignal = createProviderAbortSignal(options.abortSignal, providerTimeoutMs(config));
 
-                if (parent) {
-                    if (parent.aborted) {
-                        clearTimeout(timeoutId);
-                        controller.abort();
-                    } else {
-                        const onAbort = () => {
-                            clearTimeout(timeoutId);
-                            controller.abort();
-                        };
-                        parent.addEventListener("abort", onAbort, {
-                            once: true,
-                        });
-                    }
-                }
-
-                return { signal: controller.signal, timeoutId };
-            })();
-
-            const result = await generateTextFn({
-                abortSignal: abortSignal.signal,
-                maxOutputTokens: options.maxOutputTokens,
-                model,
-                prompt,
-                ...(Object.keys(providerOptions).length > 0
-                    ? {
-                          providerOptions: providerOptions as Record<string, Record<string, JSONValue>>,
-                      }
-                    : {}),
-                system: systemPrompt,
-                temperature: modelInfo.provider === "anthropic" && options.thinkingMode ? 0 : options.temperature,
-            });
-
-            clearTimeout(abortSignal.timeoutId);
+            let result: Awaited<ReturnType<GenerateTextFn>>;
+            try {
+                result = await Promise.resolve(
+                    generateTextFn({
+                        abortSignal: abortSignal.signal,
+                        maxOutputTokens: options.maxOutputTokens,
+                        model,
+                        prompt,
+                        ...(Object.keys(providerOptions).length > 0
+                            ? {
+                                  providerOptions: providerOptions as Record<string, Record<string, JSONValue>>,
+                              }
+                            : {}),
+                        system: systemPrompt,
+                        temperature:
+                            modelInfo.provider === "anthropic" && options.thinkingMode ? 0 : options.temperature,
+                    }),
+                );
+            } finally {
+                abortSignal.cleanup();
+            }
 
             // Prefer API-provided usage fields.  When the API returns only
             // totalTokens without a breakdown, set input/output to 0
