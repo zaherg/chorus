@@ -221,6 +221,27 @@ const mockStdin = async (
     }
 };
 
+const createTrackedStdin = (): { reads: { count: number }; stream: Readable } => {
+    const reads = { count: 0 };
+    const stream = new Readable({
+        read() {
+            reads.count += 1;
+            this.push(null);
+        },
+    });
+    return { reads, stream };
+};
+
+const expectStdinJsonRejection = async (args: string[], expectedError: string): Promise<void> => {
+    const { reads, stream } = createTrackedStdin();
+    const { result, stderr, stdout } = await mockStdin(() => runConsensusCommand(args), stream);
+
+    expect(result).toBe(2);
+    expect(stdout).toBe("");
+    expect(stderr).toBe(`${expectedError}\n`);
+    expect(reads.count).toBe(0);
+};
+
 describe("parseConsensusArgs", () => {
     const parseSuccess = (args: string[]) => {
         const parsed = parseConsensusArgs(args);
@@ -322,6 +343,8 @@ describe("parseConsensusArgs", () => {
 
     it("uses minimist last-value behavior for repeated and contradictory booleans", () => {
         expect(parseSuccess(["--sequential", "--no-sequential", "--sequential=false"]).sequential).toBe(false);
+        expect(parseSuccess(["--stdin-json", "--no-stdin-json", "--stdin-json=false"]).stdinJson).toBe(false);
+        expect(parseSuccess(["--stdin-json=false", "--no-stdin-json", "--stdin-json"]).stdinJson).toBe(true);
     });
 
     it("keeps numeric-looking temperature values as strings", () => {
@@ -393,7 +416,7 @@ describe("runConsensusCommand", () => {
         expect(parsed.embeddedFiles.total_tokens).toBe("number");
     });
 
-    it("prints schema after valid parsing without loading configuration or the catalog", async () => {
+    it("prints schema before stdin conflict validation or downstream work after valid parsing", async () => {
         let configLoadCount = 0;
         let catalogLoadCount = 0;
         mock.module("@/config", () => ({
@@ -408,11 +431,17 @@ describe("runConsensusCommand", () => {
                 return fixtureModels();
             },
         }));
+        const { reads, stream } = createTrackedStdin();
 
-        const { result, stderr, stdout } = await captureOutput(() => runConsensusCommand(["--schema"]));
+        const { result, stderr, stdout } = await mockStdin(
+            () => runConsensusCommand(["--stdin-json", "--models", "first,second", "--prompt=ignored", "--schema"]),
+            stream,
+        );
+
         expect(result).toBe(0);
         expect(stderr).toBe("");
         expect(JSON.parse(stdout).schema).toBe("cli.consensus/2");
+        expect(reads.count).toBe(0);
         expect(configLoadCount).toBe(0);
         expect(catalogLoadCount).toBe(0);
     });
@@ -527,7 +556,44 @@ describe("runConsensusCommand", () => {
         });
     });
 
-    it("uses stdin JSON request fields while retaining the CLI synthesis fallback", async () => {
+    it("uses the final parsed stdin JSON boolean value for operational execution", async () => {
+        stubDefaults();
+        const receivedRequests: unknown[] = [];
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequests.push(request);
+            return defaultConsensusImpl();
+        });
+        const models = "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro";
+        const cliCases: Array<{ args: string[]; findings: string }> = [
+            {
+                args: ["--stdin-json=false", "--models", models, "--prompt", "explicit false"],
+                findings: "explicit false",
+            },
+            {
+                args: ["--no-stdin-json", `--models=${models}`, "--prompt=negated"],
+                findings: "negated",
+            },
+            {
+                args: ["--stdin-json", "--models", models, "--prompt", "repeated false", "--no-stdin-json"],
+                findings: "repeated false",
+            },
+        ];
+
+        for (const { args } of cliCases) {
+            const { result, stderr } = await captureOutput(() => runConsensusCommand(args));
+            expect(result).toBe(0);
+            expect(stderr).toBe("");
+        }
+        expect(receivedRequests).toMatchObject(cliCases.map(({ findings }) => ({ findings, step: findings })));
+
+        await expectStdinJsonRejection(
+            ["--stdin-json=false", "--models", models, "--prompt", "ignored", "--stdin-json"],
+            "Error: --models cannot be combined with --stdin-json",
+        );
+        expect(receivedRequests).toHaveLength(cliCases.length);
+    });
+
+    it("uses only the stdin JSON synthesis model for a standard-input request", async () => {
         stubDefaults();
         let receivedRequest: unknown;
         stubRunConsensus(async (request: unknown) => {
@@ -543,31 +609,9 @@ describe("runConsensusCommand", () => {
             stances: { "gemini-2.5-pro": "for" },
             thinking_modes: { "gemini-2.5-pro": "high" },
             temperatures: { "gemini-2.5-pro": 0.6 },
+            synthesis_model: "anthropic/claude-sonnet-4-5",
         });
-        const { result } = await mockStdin(
-            () =>
-                runConsensusCommand([
-                    "--stdin-json",
-                    "--models",
-                    "only-one-model",
-                    "--prompt",
-                    "ignored prompt",
-                    "--temperature",
-                    "invalid-temperature",
-                    "--files",
-                    "ignored.ts",
-                    "--stance",
-                    "not-model-value",
-                    "--thinking-mode",
-                    "model=invalid",
-                    "--temperature-model",
-                    "model=2",
-                    "--synthesis-model",
-                    "anthropic/claude-sonnet-4-5",
-                    "--sequential",
-                ]),
-            input,
-        );
+        const { result } = await mockStdin(() => runConsensusCommand(["--stdin-json", "--sequential"]), input);
 
         expect(result).toBe(0);
         expect(receivedRequest).toMatchObject({
@@ -589,43 +633,20 @@ describe("runConsensusCommand", () => {
         });
     });
 
-    it("rejects malformed CLI options in stdin JSON mode before loading configuration or the catalog", async () => {
-        let configLoadCount = 0;
-        let catalogLoadCount = 0;
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                configLoadCount += 1;
-                return testConfig();
-            },
-        }));
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => {
-                catalogLoadCount += 1;
-                return fixtureModels();
-            },
-        }));
-
-        const input = JSON.stringify({
-            models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
-            prompt: "stdin prompt",
+    it("rejects a CLI synthesis model instead of using it as a stdin JSON fallback", async () => {
+        stubDefaults();
+        let consensusCalls = 0;
+        stubRunConsensus(async () => {
+            consensusCalls += 1;
+            return defaultConsensusImpl();
         });
-        const cases: Array<{ args: string[]; expected: string }> = [
-            { args: ["--stdin-json", "--bogus"], expected: "unknown option" },
-            {
-                args: ["--stdin-json", "--synthesis-model", "one", "--synthesis-model", "two"],
-                expected: "may only be specified once",
-            },
-            { args: ["--stdin-json", "--sequential=invalid"], expected: "must be true or false" },
-        ];
 
-        for (const { args, expected } of cases) {
-            const { result, stderr, stdout } = await mockStdin(() => runConsensusCommand(args), input);
-            expect(result).toBe(2);
-            expect(stdout).toBe("");
-            expect(stderr).toContain(expected);
-        }
-        expect(configLoadCount).toBe(0);
-        expect(catalogLoadCount).toBe(0);
+        await expectStdinJsonRejection(
+            ["--stdin-json", "--synthesis-model", "anthropic/claude-sonnet-4-5"],
+            "Error: --synthesis-model cannot be combined with --stdin-json",
+        );
+
+        expect(consensusCalls).toBe(0);
     });
 
     it("rejects invalid non-stdin temperature and model=value request fields", async () => {
@@ -1328,6 +1349,72 @@ describe("runConsensusCommand", () => {
         expect(payload.models).toHaveLength(1);
     });
 
+    it("keeps stdin JSON unresolved synthesis warnings source-neutral without changing request behavior", async () => {
+        stubDefaults();
+        const openrouterModel = BrokerModelInfoSchema.parse({
+            route_id: "openrouter/openai/gpt-5.2",
+            provider: "openrouter",
+            provider_model_id: "openai/gpt-5.2",
+            display_name: "GPT-5.2",
+        });
+        const googleModel = BrokerModelInfoSchema.parse({
+            route_id: "google-vertex/gemini-2.5-pro",
+            provider: "google-vertex",
+            provider_model_id: "gemini-2.5-pro",
+            display_name: "Gemini 2.5 Pro",
+        });
+        stubRouteResolver((input) => {
+            if (input === "openrouter/openai/gpt-5.2") {
+                return { ok: true as const, value: openrouterModel };
+            }
+            if (input === "google-vertex/gemini-2.5-pro") {
+                return { ok: true as const, value: googleModel };
+            }
+            if (input === "synth-missing") {
+                return {
+                    ok: false as const,
+                    error: {
+                        code: "model_not_found" as const,
+                        input,
+                        message: "synth model not found",
+                    },
+                };
+            }
+            throw new Error(`Unexpected route input: ${input}`);
+        });
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+        const input = JSON.stringify({
+            models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+            prompt: "stdin prompt",
+            synthesis_model: "synth-missing",
+        });
+
+        const { result, stderr, stdout } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), input);
+
+        expect(result).toBe(0);
+        expect(stderr).toContain(
+            "Warning: synthesis model could not be resolved (synth-missing); synthesis will be skipped.",
+        );
+        expect(stderr).not.toContain("--synthesis-model");
+        expect(receivedRequest).toMatchObject({
+            findings: "stdin prompt",
+            step: "stdin prompt",
+            synthesisModel: undefined,
+            models: [{ model_id: "openrouter/openai/gpt-5.2" }, { model_id: "google-vertex/gemini-2.5-pro" }],
+        });
+        const payload = JSON.parse(stdout);
+        expect(payload.synthesis).toBeNull();
+        expect(payload.synthesis_error).toEqual({
+            code: "synthesis_model_unresolved",
+            message: "synth model not found",
+            retryable: false,
+        });
+    });
+
     it("classifies and resolves one active selector only once across all three maps", async () => {
         stubDefaults();
         const googleModel = BrokerModelInfoSchema.parse({
@@ -1512,6 +1599,84 @@ describe("runConsensusCommand", () => {
         expect(stderr).toContain("boom");
     });
 
+    it("preserves parser-error precedence in stdin JSON mode before input or downstream work", async () => {
+        const counters = stubDownstreamWorkCounters();
+
+        for (const option of ["models", "prompt", "temperature", "synthesis-model", "files"]) {
+            await expectStdinJsonRejection(["--stdin-json", `--${option}=`], `Error: --${option} requires a value`);
+            await expectStdinJsonRejection(
+                ["--stdin-json", `--${option}`, "first", `--${option}`, "second"],
+                `Error: --${option} may only be specified once`,
+            );
+        }
+        await expectStdinJsonRejection(["--stdin-json", "--bogus"], "Error: unknown option --bogus");
+        await expectStdinJsonRejection(
+            ["--stdin-json", "--sequential=invalid"],
+            "Error: --sequential must be true or false",
+        );
+
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
+        expect(counters.routeWork).toBe(0);
+        expect(counters.consensus).toBe(0);
+    });
+
+    it("rejects every operational CLI option in both forms before input or downstream work", async () => {
+        const counters = stubDownstreamWorkCounters();
+        const conflicts = [
+            { option: "models", value: "first,second" },
+            { option: "prompt", value: "review" },
+            { option: "files", value: "src/a.ts" },
+            { option: "temperature", value: "0.2" },
+            { option: "stance", value: "model=for" },
+            { option: "thinking-mode", value: "model=minimal" },
+            { option: "temperature-model", value: "model=0.2" },
+            { option: "synthesis-model", value: "model" },
+        ] as const;
+
+        for (const { option, value } of conflicts) {
+            const forms: string[][] = [[`--${option}`, value], [`--${option}=${value}`]];
+            for (const form of forms) {
+                await expectStdinJsonRejection(
+                    ["--stdin-json", ...form],
+                    `Error: --${option} cannot be combined with --stdin-json`,
+                );
+            }
+        }
+
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
+        expect(counters.routeWork).toBe(0);
+        expect(counters.consensus).toBe(0);
+    });
+
+    it("reports the first stdin JSON conflict in original command-line order", async () => {
+        const counters = stubDownstreamWorkCounters();
+        const cases: Array<{ args: string[]; expectedOption: string }> = [
+            {
+                args: ["--stdin-json", "--prompt", "review", "--models=first,second"],
+                expectedOption: "prompt",
+            },
+            {
+                args: ["--files=src/a.ts", "--stdin-json", "--temperature", "0.2"],
+                expectedOption: "files",
+            },
+            {
+                args: ["--temperature-model=model=0.2", "--stance", "model=for", "--stdin-json"],
+                expectedOption: "temperature-model",
+            },
+        ];
+
+        for (const { args, expectedOption } of cases) {
+            await expectStdinJsonRejection(args, `Error: --${expectedOption} cannot be combined with --stdin-json`);
+        }
+
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
+        expect(counters.routeWork).toBe(0);
+        expect(counters.consensus).toBe(0);
+    });
+
     it("returns code 1 for an immediate stdin stream error before downstream work", async () => {
         const counters = stubDownstreamWorkCounters();
         const originalDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
@@ -1560,7 +1725,7 @@ describe("runConsensusCommand", () => {
 });
 
 describe("runCli", () => {
-    it("help text does not claim auto-picked synthesis model", async () => {
+    it("documents synthesis and stdin JSON contracts", async () => {
         stubDefaults();
         const { result, stdout } = await captureOutput(() => runCli(["--help"]));
         expect(result).toBe(0);
@@ -1572,6 +1737,31 @@ describe("runCli", () => {
         expect(stdout).toContain("No suffix matching or automatic provider choice.");
         expect(stdout).not.toContain("suffix-matched selectors are accepted");
         expect(stdout).not.toContain("a provider is chosen automatically");
+
+        const stdinSection = stdout.slice(stdout.indexOf("STDIN JSON:"), stdout.indexOf("PER-MODEL SELECTORS:"));
+        expect(stdinSection).toContain("When --stdin-json is active, do not combine it with");
+        for (const option of [
+            "--models",
+            "--prompt",
+            "--files",
+            "--temperature",
+            "--stance",
+            "--thinking-mode",
+            "--temperature-model",
+            "--synthesis-model",
+        ]) {
+            expect(stdinSection).toContain(option);
+        }
+        expect(stdinSection).toContain("JSON supplies all value-bearing operational fields.");
+        expect(stdinSection).toContain("JSON synthesis_model is the only synthesis source in this mode.");
+        expect(stdinSection).toContain("Boolean controls such as --sequential remain valid.");
+        expect(stdinSection).toContain("Arguments are parsed first, so syntax errors take precedence.");
+        expect(stdinSection).toContain("A valid --schema request exits before stdin conflict validation.");
+        expect(stdinSection).toContain(
+            "Otherwise, the first conflicting flag in command-line order is reported before stdin is read or downstream work starts.",
+        );
+        expect(stdout).not.toContain("CLI per-model flags are inactive");
+
         expect(stdout).toContain("1  Consensus or operational error, including stdin read failures");
         expect(stdout).toContain("2  Argument or request-validation error, including completed invalid stdin input");
         expect(stdout).toContain("malformed JSON or schema-invalid content");

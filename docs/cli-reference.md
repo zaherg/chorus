@@ -76,7 +76,7 @@ After global resolution, every per-model selector must identify a selected parti
 Unknown or ambiguous selectors stop with a structured model-resolution error and exit code `3`.
 Resolved but unselected selectors and conflicting assignments stop with a request-validation error on stderr and exit code `2`.
 Equal assignments through different aliases are accepted, while conflicting assignments to the same route and field are rejected.
-When `--stdin-json` is active, the stdin maps own per-model values and CLI per-model flags are inactive.
+In stdin JSON mode, use the JSON maps for per-model values; the corresponding CLI flags are rejected as described in [Stdin JSON input](#stdin-json-input).
 
 ### OUTPUT
 
@@ -164,8 +164,13 @@ When `--stdin-json` is used, pipe a JSON object:
 }
 ```
 
-The `stances`, `thinking_modes`, and `temperatures` keys use the per-model selector rules above.
-CLI per-model flags remain inactive in stdin mode.
+When `--stdin-json` is active, do not combine it with `--models`, `--prompt`, `--files`, `--temperature`, `--stance`, `--thinking-mode`, `--temperature-model`, or `--synthesis-model`.
+The JSON request supplies all value-bearing operational fields, and `synthesis_model` is the only synthesis source in this mode.
+Boolean controls such as `--sequential` remain valid.
+The CLI parses arguments first, so parser errors take precedence over stdin conflict errors.
+A valid `--schema` request exits before stdin conflict validation.
+Otherwise, conflict validation reports the first conflicting flag in command-line order and exits with code `2` before reading stdin or starting downstream work.
+The `stances`, `thinking_modes`, and `temperatures` keys use the per-model selector rules described in [Per-model selector semantics](#per-model-selector-semantics).
 If reading stdin fails, the command writes the original cause to stderr, leaves stdout empty, discards partial input, and exits with code `1` without parsing the partial content.
 Completed malformed JSON or schema-invalid content exits with code `2`.
 

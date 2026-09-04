@@ -56,6 +56,30 @@ const StdinConsensusSchema = z.object({
 
 const CONSENSUS_BOOLEAN_OPTIONS = ["sequential", "stdin-json", "schema"] as const;
 
+const CONSENSUS_OPERATIONAL_VALUE_OPTIONS = [
+    "models",
+    "prompt",
+    "files",
+    "temperature",
+    "stance",
+    "thinking-mode",
+    "temperature-model",
+    "synthesis-model",
+] as const;
+
+type StdinJsonConflictingOption = (typeof CONSENSUS_OPERATIONAL_VALUE_OPTIONS)[number];
+
+const findStdinJsonConflict = (args: readonly string[]): StdinJsonConflictingOption | undefined => {
+    for (const arg of args) {
+        for (const option of CONSENSUS_OPERATIONAL_VALUE_OPTIONS) {
+            if (arg === `--${option}` || arg.startsWith(`--${option}=`)) {
+                return option;
+            }
+        }
+    }
+    return undefined;
+};
+
 const ConsensusMinimistSchema = z
     .object({
         _: z.array(z.string()),
@@ -144,17 +168,7 @@ export const parseConsensusArgs = (args: string[]): Result<ParsedConsensusArgs, 
 
     const unknownOptions: string[] = [];
     const raw: unknown = minimist(args, {
-        string: [
-            "_",
-            "models",
-            "prompt",
-            "temperature",
-            "synthesis-model",
-            "files",
-            "stance",
-            "thinking-mode",
-            "temperature-model",
-        ],
+        string: ["_", ...CONSENSUS_OPERATIONAL_VALUE_OPTIONS],
         boolean: [...CONSENSUS_BOOLEAN_OPTIONS],
         "--": true,
         unknown: (token: string) => {
@@ -326,6 +340,14 @@ export const runConsensusCommand = async (args: string[]) => {
         return 0;
     }
 
+    if (stdinJson) {
+        const conflictingOption = findStdinJsonConflict(args);
+        if (conflictingOption !== undefined) {
+            process.stderr.write(`Error: --${conflictingOption} cannot be combined with --stdin-json\n`);
+            return 2;
+        }
+    }
+
     let modelInputs: string[];
     let promptText: string;
     let findings: string;
@@ -366,7 +388,7 @@ export const runConsensusCommand = async (args: string[]) => {
         if (parsed.temperatures) modelTemperatures = parsed.temperatures;
         globalTemperature = parsed.temperature;
         relevantFiles = parsed.files ?? [];
-        synthesisModel = parsed.synthesis_model ?? synthesisModel;
+        synthesisModel = parsed.synthesis_model;
     } else {
         if (!modelsStr) {
             process.stderr.write("Error: --models is required (comma-separated route_ids or provider-native IDs)\n");
@@ -542,7 +564,7 @@ export const runConsensusCommand = async (args: string[]) => {
                 retryable: false,
             };
             process.stderr.write(
-                `Warning: --synthesis-model could not be resolved (${synthesisModel}); synthesis will be skipped.\n`,
+                `Warning: synthesis model could not be resolved (${synthesisModel}); synthesis will be skipped.\n`,
             );
         }
     }

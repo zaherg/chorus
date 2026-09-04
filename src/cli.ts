@@ -70,6 +70,15 @@ CONSENSUS USAGE:
     --stdin-json                            Read full request as JSON from stdin
     --schema                                Print output JSON schema and exit
 
+STDIN JSON:
+  When --stdin-json is active, do not combine it with --models, --prompt, --files,
+  --temperature, --stance, --thinking-mode, --temperature-model, or --synthesis-model.
+  JSON supplies all value-bearing operational fields. JSON synthesis_model is the only synthesis source in this mode.
+  Boolean controls such as --sequential remain valid.
+  Arguments are parsed first, so syntax errors take precedence.
+  A valid --schema request exits before stdin conflict validation.
+  Otherwise, the first conflicting flag in command-line order is reported before stdin is read or downstream work starts.
+
 PER-MODEL SELECTORS:
   <model> is an exact route_id or a uniquely resolved bare provider_model_id.
   Bare IDs require an exact unique provider_model_id match across all configured catalog-backed providers.
@@ -79,7 +88,7 @@ PER-MODEL SELECTORS:
   Unknown or ambiguous selectors return structured code 3 errors.
   Unselected or conflicting selectors return request-validation code 2 errors.
   Equal aliases are accepted; conflicting aliases are rejected.
-  In --stdin-json mode, stdin maps own per-model values and CLI per-model flags are inactive.
+  In --stdin-json mode, JSON stances, thinking_modes, and temperatures are the only per-model sources.
 
 LIST-MODELS USAGE:
   consensus list-models [filter] [--json] [--refresh] [--help]

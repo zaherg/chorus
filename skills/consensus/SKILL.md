@@ -104,6 +104,24 @@ Default to parallel requests for independent evaluation.
 
 Run `consensus --help` for optional thinking modes, temperature controls, and JSON stdin syntax.
 
+### Stdin JSON requests
+
+Use stdin JSON when the agent has a complete structured request.
+
+```bash
+printf '%s\n' '{"models":["provider-a/model-a","provider-b/model-b"],"prompt":"Evaluate this proposal independently."}' | \
+  consensus --stdin-json
+```
+
+Replace the illustrative routes with exact live `route_id` values from discovery.
+When `--stdin-json` is active, do not pass `--models`, `--prompt`, `--files`, `--temperature`, `--stance`, `--thinking-mode`, `--temperature-model`, or `--synthesis-model`.
+Put every value-bearing operational field in JSON.
+The JSON `synthesis_model` field is the only synthesis source in this mode.
+Boolean controls such as `--sequential` remain valid.
+The CLI parses arguments first, so parser errors take precedence over stdin conflict errors.
+A valid `--schema` request exits before stdin conflict validation.
+Otherwise, the first conflicting flag in command-line order stops execution before stdin or downstream work.
+
 ## File embedding
 
 Run the CLI from the project root and pass project-relative file paths:
