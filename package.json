@@ -27,20 +27,20 @@
         "changelog:update": "git-cliff --config .github/config/cliff.toml -o CHANGELOG.md"
     },
     "dependencies": {
-        "@ai-sdk/amazon-bedrock": "^5.0.67",
-        "@ai-sdk/anthropic": "^4.0.45",
-        "@ai-sdk/azure": "^4.0.53",
-        "@ai-sdk/google-vertex": "^5.0.69",
-        "@ai-sdk/openai-compatible": "^3.0.40",
-        "@logtape/file": "^2.3.2",
-        "@logtape/logtape": "^2.3.2",
-        "@openrouter/ai-sdk-provider": "^3.0.0",
-        "ai": "^7.0.84",
+        "@ai-sdk/amazon-bedrock": "^5.0.146",
+        "@ai-sdk/anthropic": "^4.0.107",
+        "@ai-sdk/azure": "^4.0.130",
+        "@ai-sdk/google-vertex": "^5.0.143",
+        "@ai-sdk/openai-compatible": "^3.0.94",
+        "@logtape/file": "^2.4.2",
+        "@logtape/logtape": "^2.4.2",
+        "@openrouter/ai-sdk-provider": "^3.1.0",
+        "ai": "^7.0.178",
         "minimist": "^1.2.8",
-        "zod": "^4.5.2"
+        "zod": "^4.6.7"
     },
     "devDependencies": {
-        "@types/bun": "^1.4.0",
+        "@types/bun": "^1.4.5",
         "@types/minimist": "^1.2.5",
         "@types/node": "26.1.1",
         "typescript": "^7.0.2"
