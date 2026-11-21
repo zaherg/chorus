@@ -1,9 +1,58 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 
+import { APICallError, RetryError } from "ai";
+
 import { customProviderBaseUrl } from "@/providers/custom-url";
-import { createProviderRegistry } from "@/providers/registry";
+import { createProviderRegistry, ThinkingModeSchema, thinkingModeValues } from "@/providers/registry";
 import { BrokerModelInfoSchema, type ModelsListResponse, type ProviderId, providerIdValues } from "@/types/providers";
 import { testConfig } from "./helpers";
+
+const PROVIDER_ENV_KEYS = [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_PROFILE",
+    "AWS_REGION",
+    "AWS_ENDPOINT_URL_BEDROCK_RUNTIME",
+    "AWS_ENDPOINT_URL",
+    "AZURE_RESOURCE_NAME",
+    "GOOGLE_VERTEX_PROJECT",
+    "GOOGLE_VERTEX_LOCATION",
+] as const;
+
+const withProviderEnv = (overrides: Record<string, string | undefined>, run: () => void): void => {
+    const originals = new Map<string, string | undefined>();
+    const keys = new Set<string>([...PROVIDER_ENV_KEYS, ...Object.keys(overrides)]);
+    for (const key of keys) {
+        originals.set(key, process.env[key]);
+        const nextValue = overrides[key];
+        if (nextValue === undefined) {
+            delete process.env[key];
+        } else {
+            process.env[key] = nextValue;
+        }
+    }
+
+    try {
+        run();
+    } finally {
+        for (const [key, original] of originals) {
+            if (original === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = original;
+            }
+        }
+    }
+};
+
+const expectRejectedError = async (promise: Promise<unknown>): Promise<Error> => {
+    try {
+        await promise;
+    } catch (error: unknown) {
+        return error instanceof Error ? error : new Error(String(error));
+    }
+    throw new Error("Expected promise to reject");
+};
 
 const openrouterCatalog = (): ModelsListResponse => {
     const gpt = BrokerModelInfoSchema.parse({
@@ -51,9 +100,8 @@ describe("ProviderRegistry", () => {
         });
 
         test("still rejects non-loopback insecure custom provider URLs by default", async () => {
-            await expect(customProviderBaseUrl("http://example.com/v1", false)).rejects.toThrow(
-                "custom_url must use https:// unless allow_insecure_custom is set to true",
-            );
+            const err = await expectRejectedError(customProviderBaseUrl("http://example.com/v1", false));
+            expect(err.message).toContain("custom_url must use https:// unless allow_insecure_custom is set to true");
         });
 
         test("rejects IPv4-mapped IPv6 custom provider URLs for private hosts", async () => {
@@ -64,32 +112,137 @@ describe("ProviderRegistry", () => {
                 "https://[::ffff:a9fe:a9fe]/v1",
                 "https://[::ffff:c0a8:101]/v1",
             ]) {
-                await expect(customProviderBaseUrl(url, false)).rejects.toThrow("custom_url host is not allowed");
+                const err = await expectRejectedError(customProviderBaseUrl(url, false));
+                expect(err.message).toContain("custom_url host is not allowed");
             }
         });
     });
 
-    describe("isProviderConfigured", () => {
-        test("returns false for every provider when no API keys are set", () => {
-            const registry = createProviderRegistry(testConfig());
-            for (const id of providerIdValues) {
-                expect(registry.isProviderConfigured(id)).toBeFalse();
+    describe("ThinkingModeSchema", () => {
+        test("accepts all supported thinking mode values and rejects invalid values", () => {
+            expect(thinkingModeValues).toEqual(["minimal", "low", "medium", "high", "max"]);
+            for (const value of thinkingModeValues) {
+                expect(ThinkingModeSchema.parse(value)).toBe(value);
             }
+            expect(ThinkingModeSchema.safeParse("extreme").success).toBeFalse();
+        });
+    });
+
+    describe("isProviderConfigured", () => {
+        test("returns false for every provider when no API keys or cloud env vars are set", () => {
+            withProviderEnv({}, () => {
+                const registry = createProviderRegistry(testConfig());
+                for (const id of providerIdValues) {
+                    expect(registry.isProviderConfigured(id)).toBeFalse();
+                }
+            });
         });
 
-        test("returns true for the provider whose API key is set", () => {
-            const registry = createProviderRegistry(testConfig({ azure_api_key: "azure-key" }));
-            expect(registry.isProviderConfigured("azure")).toBeTrue();
+        test("returns true for Azure only when API key and resource name or base URL are set", () => {
+            withProviderEnv({}, () => {
+                expect(
+                    createProviderRegistry(testConfig({ azure_api_key: "azure-key" })).isProviderConfigured("azure"),
+                ).toBeFalse();
+                expect(
+                    createProviderRegistry(
+                        testConfig({ azure_api_key: "azure-key", azure_resource_name: "my-azure" }),
+                    ).isProviderConfigured("azure"),
+                ).toBeTrue();
+                expect(
+                    createProviderRegistry(
+                        testConfig({ azure_api_key: "azure-key", azure_base_url: "https://my-azure.openai.azure.com" }),
+                    ).isProviderConfigured("azure"),
+                ).toBeTrue();
+                expect(
+                    createProviderRegistry(
+                        testConfig({ azure_api_key: "azure-key", azure_resource_name: `\${AZURE_RESOURCE_NAME}` }),
+                    ).isProviderConfigured("azure"),
+                ).toBeFalse();
+            });
+
+            withProviderEnv({ AZURE_RESOURCE_NAME: "env-azure" }, () => {
+                expect(
+                    createProviderRegistry(testConfig({ azure_api_key: "azure-key" })).isProviderConfigured("azure"),
+                ).toBeTrue();
+            });
+        });
+
+        test("returns true for Amazon Bedrock when auth and region or endpoint are set", () => {
+            withProviderEnv({}, () => {
+                expect(
+                    createProviderRegistry(testConfig({ amazon_bedrock_api_key: "bedrock-key" })).isProviderConfigured(
+                        "amazon-bedrock",
+                    ),
+                ).toBeFalse();
+                expect(
+                    createProviderRegistry(
+                        testConfig({ amazon_bedrock_api_key: "bedrock-key", amazon_bedrock_region: "us-east-1" }),
+                    ).isProviderConfigured("amazon-bedrock"),
+                ).toBeTrue();
+            });
+
+            withProviderEnv({ AWS_REGION: "us-west-2" }, () => {
+                expect(
+                    createProviderRegistry(testConfig({ amazon_bedrock_api_key: "bedrock-key" })).isProviderConfigured(
+                        "amazon-bedrock",
+                    ),
+                ).toBeTrue();
+            });
+
+            withProviderEnv(
+                {
+                    AWS_ACCESS_KEY_ID: "AKIA_TEST",
+                    AWS_SECRET_ACCESS_KEY: "secret",
+                    AWS_REGION: "us-east-1",
+                },
+                () => {
+                    expect(createProviderRegistry(testConfig()).isProviderConfigured("amazon-bedrock")).toBeTrue();
+                },
+            );
+
+            withProviderEnv({ AWS_PROFILE: "dev", AWS_ENDPOINT_URL_BEDROCK_RUNTIME: "https://bedrock.local" }, () => {
+                expect(createProviderRegistry(testConfig()).isProviderConfigured("amazon-bedrock")).toBeTrue();
+            });
+        });
+
+        test("returns true for Google Vertex in express mode or ADC mode", () => {
+            withProviderEnv({}, () => {
+                expect(
+                    createProviderRegistry(testConfig({ google_vertex_api_key: "vertex-key" })).isProviderConfigured(
+                        "google-vertex",
+                    ),
+                ).toBeTrue();
+                expect(
+                    createProviderRegistry(testConfig({ google_vertex_project: "my-proj" })).isProviderConfigured(
+                        "google-vertex",
+                    ),
+                ).toBeFalse();
+                expect(
+                    createProviderRegistry(
+                        testConfig({ google_vertex_project: "my-proj", google_vertex_location: "us-central1" }),
+                    ).isProviderConfigured("google-vertex"),
+                ).toBeTrue();
+            });
+
+            withProviderEnv({ GOOGLE_VERTEX_PROJECT: "env-proj", GOOGLE_VERTEX_LOCATION: "global" }, () => {
+                expect(createProviderRegistry(testConfig()).isProviderConfigured("google-vertex")).toBeTrue();
+            });
         });
 
         test("returns false for the provider whose API key is not set", () => {
-            const registry = createProviderRegistry(testConfig({ azure_api_key: "azure-key" }));
-            expect(registry.isProviderConfigured("openrouter")).toBeFalse();
+            withProviderEnv({}, () => {
+                const registry = createProviderRegistry(
+                    testConfig({ azure_api_key: "azure-key", azure_resource_name: "my-azure" }),
+                );
+                expect(registry.isProviderConfigured("openrouter")).toBeFalse();
+            });
         });
 
         test("returns false when the API key is an unresolved environment variable reference", () => {
-            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "$OPENROUTER_API_KEY" }));
-            expect(registry.isProviderConfigured("openrouter")).toBeFalse();
+            const bareRegistry = createProviderRegistry(testConfig({ openrouter_api_key: "$OPENROUTER_API_KEY" }));
+            const bracedRegistry = createProviderRegistry(testConfig({ openrouter_api_key: `\${OPENROUTER_API_KEY}` }));
+            expect(bareRegistry.isProviderConfigured("openrouter")).toBeFalse();
+            expect(bracedRegistry.isProviderConfigured("openrouter")).toBeFalse();
         });
 
         test("returns false for custom provider when API key is unresolved even with valid URL", () => {
@@ -444,6 +597,304 @@ describe("ProviderRegistry", () => {
 
             expect(result.ok).toBeTrue();
             expect(providerModelIds).toEqual(["example-model"]);
+        });
+
+        test("clamps Anthropic thinking budget and computes remaining maxOutputTokens", async () => {
+            const calls: Array<Record<string, unknown>> = [];
+            const makeCatalog = (outputLimit?: number): ModelsListResponse => {
+                const claude = BrokerModelInfoSchema.parse({
+                    route_id: "anthropic/claude-sonnet-4-5",
+                    provider: "anthropic",
+                    provider_model_id: "claude-sonnet-4-5",
+                    display_name: "Claude Sonnet 4.5",
+                    ...(outputLimit !== undefined ? { output_limit: outputLimit } : {}),
+                });
+                return {
+                    schema: "models.list/1",
+                    cache: {
+                        status: "fresh",
+                        fetched_at: "2026-01-01T00:00:00.000Z",
+                        expires_at: "2026-01-02T00:00:00.000Z",
+                    },
+                    providers: {
+                        anthropic: { status: "catalog", models: [claude] },
+                    },
+                };
+            };
+            const registry = createProviderRegistry(testConfig({ anthropic_api_key: "anthropic-key" }), {
+                providerFactories: {
+                    anthropic: {
+                        languageModel: (modelId) => ({ modelId }) as never,
+                    },
+                },
+                generateTextFn: async (args) => {
+                    calls.push(args as Record<string, unknown>);
+                    return {
+                        response: {
+                            modelId: "claude-sonnet-4-5",
+                            timestamp: new Date("2026-08-27T00:00:00.000Z"),
+                        },
+                        text: "ok",
+                        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                    } as never;
+                },
+            });
+            const configured = new Set<ProviderId>(["anthropic"]);
+
+            // 1. max (80k) on 64k output_limit clamps budget to 62,976 and leaves 1,024 output tokens.
+            await registry.generateText("anthropic/claude-sonnet-4-5", "hi", undefined, {
+                catalog: makeCatalog(64_000),
+                configuredProviders: configured,
+                thinkingMode: "max",
+            });
+            // 2. medium (20k) on 64k output_limit leaves 44,000 output tokens.
+            await registry.generateText("anthropic/claude-sonnet-4-5", "hi", undefined, {
+                catalog: makeCatalog(64_000),
+                configuredProviders: configured,
+                thinkingMode: "medium",
+            });
+            // 3. Explicit tighter caller maxOutputTokens is respected.
+            await registry.generateText("anthropic/claude-sonnet-4-5", "hi", undefined, {
+                catalog: makeCatalog(64_000),
+                configuredProviders: configured,
+                maxOutputTokens: 4_096,
+                thinkingMode: "medium",
+            });
+            // 4. output_limit <= 1024 omits thinking options and keeps caller temperature.
+            await registry.generateText("anthropic/claude-sonnet-4-5", "hi", undefined, {
+                catalog: makeCatalog(1_024),
+                configuredProviders: configured,
+                temperature: 0.4,
+                thinkingMode: "minimal",
+            });
+            // 5. Undefined output_limit caps requested budget safely at 32,000.
+            await registry.generateText("anthropic/claude-sonnet-4-5", "hi", undefined, {
+                catalog: makeCatalog(undefined),
+                configuredProviders: configured,
+                thinkingMode: "max",
+            });
+
+            expect(calls).toHaveLength(5);
+            expect(calls[0]?.providerOptions).toEqual({
+                anthropic: { thinking: { type: "enabled", budgetTokens: 62_976 } },
+            });
+            expect(calls[0]?.maxOutputTokens).toBe(1_024);
+            expect(calls[0]?.temperature).toBe(0);
+
+            expect(calls[1]?.providerOptions).toEqual({
+                anthropic: { thinking: { type: "enabled", budgetTokens: 20_000 } },
+            });
+            expect(calls[1]?.maxOutputTokens).toBe(44_000);
+
+            expect(calls[2]?.maxOutputTokens).toBe(4_096);
+
+            expect(calls[3]).not.toHaveProperty("providerOptions");
+            expect(calls[3]?.temperature).toBe(0.4);
+
+            expect(calls[4]?.providerOptions).toEqual({
+                anthropic: { thinking: { type: "enabled", budgetTokens: 32_000 } },
+            });
+        });
+
+        test("clamps oversized provider_timeout_ms to signed 32-bit max", async () => {
+            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
+            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
+            spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
+            const registry = createProviderRegistry(
+                testConfig({
+                    provider_timeout_ms: 9_999_999_999,
+                    openrouter_api_key: "openrouter-key",
+                }),
+                {
+                    generateTextFn: async () =>
+                        ({
+                            response: { modelId: "openai/gpt-5.2", timestamp: new Date() },
+                            text: "ok",
+                            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                        }) as never,
+                },
+            );
+
+            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
+
+            expect(result.ok).toBeTrue();
+            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 2_147_483_647);
+        });
+
+        test("distinguishes caller abortSignal cancellation from internal timeout", async () => {
+            const parentController = new AbortController();
+            const cancelRegistry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                generateTextFn: async (args) =>
+                    await new Promise((_, reject) => {
+                        args.abortSignal?.addEventListener("abort", () => {
+                            reject(new DOMException("The operation was aborted.", "AbortError"));
+                        });
+                        parentController.abort();
+                    }),
+            });
+
+            const cancelled = await cancelRegistry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                abortSignal: parentController.signal,
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
+
+            expect(cancelled.ok).toBeFalse();
+            if (!cancelled.ok) {
+                expect(cancelled.error.type).toBe("cancelled");
+                expect(cancelled.error.message).toBe("Provider request cancelled");
+                expect(cancelled.error.retryable).toBeFalse();
+            }
+
+            const alreadyAborted = new AbortController();
+            alreadyAborted.abort();
+            let called = false;
+            const shortCircuitRegistry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                generateTextFn: async () => {
+                    called = true;
+                    throw new Error("should not run");
+                },
+            });
+            const preCancelled = await shortCircuitRegistry.generateText(
+                "openrouter/openai/gpt-5.2",
+                "hello",
+                undefined,
+                {
+                    abortSignal: alreadyAborted.signal,
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                },
+            );
+            expect(called).toBeFalse();
+            expect(preCancelled.ok).toBeFalse();
+            if (!preCancelled.ok) {
+                expect(preCancelled.error.type).toBe("cancelled");
+                expect(preCancelled.error.retryable).toBeFalse();
+            }
+
+            const timeoutRegistry = createProviderRegistry(
+                testConfig({ openrouter_api_key: "openrouter-key", provider_timeout_ms: 10 }),
+                {
+                    generateTextFn: async (args) =>
+                        await new Promise((_, reject) => {
+                            args.abortSignal?.addEventListener("abort", () => {
+                                reject(new DOMException("The operation was aborted.", "AbortError"));
+                            });
+                        }),
+                },
+            );
+
+            const timedOut = await timeoutRegistry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
+            expect(timedOut.ok).toBeFalse();
+            if (!timedOut.ok) {
+                expect(timedOut.error.type).toBe("timeout");
+                expect(timedOut.error.message).toBe("Provider request timed out");
+                expect(timedOut.error.retryable).toBeTrue();
+            }
+        });
+
+        test("passes maxRetries 0 and maps APICallError, RetryError, and SSRF retryability", async () => {
+            const capturedCalls: Array<Record<string, unknown>> = [];
+            const makeRegistry = (errorToThrow: unknown) =>
+                createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                    generateTextFn: async (args) => {
+                        capturedCalls.push(args as Record<string, unknown>);
+                        throw errorToThrow;
+                    },
+                });
+
+            const badRequest = new APICallError({
+                message: "invalid request",
+                url: "https://openrouter.ai/api/v1/chat/completions",
+                requestBodyValues: {},
+                statusCode: 400,
+                isRetryable: false,
+            });
+            const res400 = await makeRegistry(badRequest).generateText(
+                "openrouter/openai/gpt-5.2",
+                "hello",
+                undefined,
+                {
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                },
+            );
+            expect(capturedCalls[0]?.maxRetries).toBe(0);
+            expect(res400.ok).toBeFalse();
+            if (!res400.ok) {
+                expect(res400.error.type).toBe("execution");
+                expect(res400.error.retryable).toBeFalse();
+            }
+
+            const rateLimited = new APICallError({
+                message: "rate limited",
+                url: "https://openrouter.ai/api/v1/chat/completions",
+                requestBodyValues: {},
+                statusCode: 429,
+                isRetryable: true,
+            });
+            const res429 = await makeRegistry(rateLimited).generateText(
+                "openrouter/openai/gpt-5.2",
+                "hello",
+                undefined,
+                {
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                },
+            );
+            expect(res429.ok).toBeFalse();
+            if (!res429.ok) {
+                expect(res429.error.type).toBe("execution");
+                expect(res429.error.retryable).toBeTrue();
+            }
+
+            const wrappedRetryError = new RetryError({
+                message: "retries exhausted",
+                reason: "maxRetriesExceeded",
+                errors: [badRequest],
+            });
+            const resRetry = await makeRegistry(wrappedRetryError).generateText(
+                "openrouter/openai/gpt-5.2",
+                "hello",
+                undefined,
+                {
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                },
+            );
+            expect(resRetry.ok).toBeFalse();
+            if (!resRetry.ok) {
+                expect(resRetry.error.type).toBe("execution");
+                expect(resRetry.error.retryable).toBeFalse();
+            }
+
+            const ssrfBlocked = new APICallError({
+                message: "Cannot connect to API",
+                url: "https://custom.example.com/v1/chat/completions",
+                requestBodyValues: {},
+                isRetryable: true,
+                cause: new Error("custom_url host is not allowed"),
+            });
+            const resSsrf = await makeRegistry(ssrfBlocked).generateText(
+                "openrouter/openai/gpt-5.2",
+                "hello",
+                undefined,
+                {
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                },
+            );
+            expect(resSsrf.ok).toBeFalse();
+            if (!resSsrf.ok) {
+                expect(resSsrf.error.type).toBe("execution");
+                expect(resSsrf.error.retryable).toBeFalse();
+            }
         });
     });
 
