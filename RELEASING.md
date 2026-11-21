@@ -5,7 +5,7 @@
 Pushing a new `v*` tag starts the `Release` workflow in `.github/workflows/release.yml`.
 The workflow checks the tag, runs CI on the tagged commit, builds and runs each binary on its own platform, and creates a draft GitHub Release.
 A maintainer reviews the draft and publishes it; nothing is published automatically.
-There is no local release script; this file is the runbook.
+`scripts/release.sh` (also exposed as `bun run release`) automates the phased local steps below (`prepare`, `tag`, `finish`, `cleanup-rc`, `status`, with `--dry-run`) while keeping tag pushes and release publishing under maintainer control; this file remains the authoritative runbook.
 
 ## Workflow Sequencing
 
@@ -62,6 +62,18 @@ Breaking changes include removed config keys, routes, or flags, and stricter inp
 Fixes bump the patch version, for example `0.2.0` to `0.2.1`.
 A published version can never be reused, because immutable releases lock its tag.
 Ship a release candidate first when a change affects how binaries are built or installed; see [Release Candidates](#release-candidates).
+
+## Automated Helper (`scripts/release.sh`)
+
+`scripts/release.sh` (or `bun run release`) runs the phases below in three resumable steps, with `--dry-run` support and full pre-release (`-rc.N`) handling:
+
+```bash
+bun run release prepare X.Y.Z     # creates release/vX.Y.Z, bumps version, runs checks, generates CHANGELOG.md
+bun run release tag X.Y.Z         # pushes branch, waits for CI, tags vX.Y.Z, watches release.yml
+bun run release finish X.Y.Z      # verifies (or --publish) release, syncs main, verifies install.sh, cleans up
+bun run release cleanup-rc X.Y.Z-rc.N
+bun run release status [X.Y.Z]
+```
 
 ## Stable Release
 

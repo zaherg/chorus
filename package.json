@@ -25,7 +25,8 @@
         "format:check": "biome format .",
         "prepack": "bun run build",
         "test": "bun run build && bun test tests/*.test.ts --isolate",
-        "changelog:update": "git-cliff --config .github/config/cliff.toml -o CHANGELOG.md"
+        "changelog:update": "git-cliff --config .github/config/cliff.toml -o CHANGELOG.md",
+        "release": "bash scripts/release.sh"
     },
     "dependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.146",

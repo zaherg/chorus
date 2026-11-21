@@ -517,7 +517,7 @@ Code, Codex, OpenCode, GitHub Copilot, Pi Coding Agent) for sub-tasks. Covers:
 
 ## 6. Release Workflows
 
-Releases are driven by GitHub Actions. A maintainer prepares a release commit with the `package.json` version and git-cliff changelog, then pushes a `v*` tag. The tag push triggers `release.yml`, which validates the tag, runs CI, builds and smoke-tests each binary on a native runner, and creates a draft release. There is no local release script. See `RELEASING.md`.
+Releases are driven by GitHub Actions. A maintainer prepares a release commit with the `package.json` version and git-cliff changelog, then pushes a `v*` tag. The tag push triggers `release.yml`, which validates the tag, runs CI, builds and smoke-tests each binary on a native runner, and creates a draft release. `scripts/release.sh` (`bun run release`) wraps the local `prepare`, `tag`, `finish`, and `cleanup-rc` phases. See `RELEASING.md`.
 
 ---
 

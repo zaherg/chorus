@@ -171,7 +171,7 @@ Use Zod v4 for all runtime validation. Prefer `z.coerce` for number parsing from
 
 Releases are automated via GitHub Actions.
 Pushing a `v*` tag triggers `release.yml`, which validates the tag against `package.json` and the installer `CLI_VERSION`, runs `ci.yml`, builds and smoke-tests each binary on a native runner, and creates a draft release.
-There is no local release script; see [RELEASING.md](../RELEASING.md) for the steps.
+Use `scripts/release.sh` (`bun run release prepare|tag|finish|cleanup-rc|status`) or follow the manual steps in [RELEASING.md](../RELEASING.md).
 
 ### Changelog
 

@@ -64,7 +64,7 @@ This file defines principles and contracts that remain stable while implementati
 
 ## RELEASE
 
-- Releases are driven entirely by GitHub Actions. Pushing a `v*` tag triggers `release.yml`: it checks the tag against `package.json` and requires the installer `CLI_VERSION` to be empty for stable releases, runs `ci.yml`, builds and smoke-tests each binary on a native runner, then creates a draft release that a maintainer publishes. `RELEASING.md` is the runbook. No local release script exists.
+- Releases are driven by GitHub Actions. Pushing a `v*` tag triggers `release.yml`: it checks the tag against `package.json` and requires the installer `CLI_VERSION` to be empty for stable releases, runs `ci.yml`, builds and smoke-tests each binary on a native runner, then creates a draft release that a maintainer publishes. `RELEASING.md` is the runbook, and `scripts/release.sh` (`bun run release`) wraps the phased local maintainer steps (`prepare`, `tag`, `finish`, `cleanup-rc`, `status`).
 
 ## AVOID
 
