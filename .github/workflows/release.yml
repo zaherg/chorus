@@ -128,7 +128,7 @@ jobs:
             exit 1
           fi
           "./$ASSET" --schema > schema.json
-          bun -e 'const { schema } = await Bun.file("schema.json").json(); if (schema !== "cli.consensus/2") throw new Error("unexpected schema: " + schema);'
+          bun -e 'const doc = await Bun.file("schema.json").json(); const schemas = Array.isArray(doc.anyOf) ? doc.anyOf.map((v) => v?.properties?.schema?.const) : []; if (typeof doc.$schema !== "string" || !schemas.includes("cli.consensus/2") || !schemas.includes("cli.consensus.error/1")) throw new Error("unexpected --schema JSON Schema output");'
           echo "$ASSET: $actual"
 
       - name: Upload binary
