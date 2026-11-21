@@ -69,10 +69,8 @@ skills/
     SKILL.md                   Agent skill: how to delegate to CLI coding agents.
 tests/                          bun:test suite. Uses mock.module, fake keys.
 .github/workflows/
-  prepare-release.yml         Manual dispatch: bump version, update changelog, tag.
-  release-orchestrator.yml    Tag push: test gate then draft release.
-  changelog.yml               Reusable git-cliff changelog update.
-  release.yml                 Reusable binary build plus draft release.
+  ci.yml                      Lint, format, typecheck, tests. Also called by release.yml.
+  release.yml                 Tag push: validate tag, CI, native builds, draft release.
 docs/
   plans/                       Implementation plans (one per feature/bug).
   solutions/                   Documented solutions to past problems.

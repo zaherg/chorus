@@ -62,10 +62,8 @@ The project ships a single CLI binary, `consensus`, that brokers between agents 
 │       └── SKILL.md             # Delegate skill documentation
 ├── .github/
 │   └── workflows/
-│       ├── prepare-release.yml  # Manual dispatch: bump version, tag
-│       ├── release-orchestrator.yml # Tag push: test gate + draft release
-│       ├── changelog.yml        # Reusable changelog update (git-cliff)
-│       └── release.yml          # Reusable binary build + draft release
+│       ├── ci.yml               # Lint, format, typecheck, tests (also called by release.yml)
+│       └── release.yml          # Tag push: validate, CI, native builds, draft release
 ├── package.json
 ├── tsconfig.json
 ├── biome.json
@@ -506,7 +504,9 @@ Code, Codex, OpenCode, GitHub Copilot, Pi Coding Agent) for sub-tasks. Covers:
 
 ## 6. Release Workflows
 
-Releases are driven by GitHub Actions. `prepare-release.yml` (manual dispatch) computes the next version, bumps `package.json` and `skills/consensus/scripts/install.sh` `CLI_VERSION` together, updates `CHANGELOG.md` via git-cliff, then pushes a `v*` tag. The tag push triggers `release-orchestrator.yml`, which runs the test gate and builds binaries, checksums, and a draft release. There is no local release script.---
+Releases are driven by GitHub Actions. A maintainer prepares a release commit with matching `package.json` version, `skills/consensus/scripts/install.sh` `CLI_VERSION`, and git-cliff changelog, then pushes a `v*` tag. The tag push triggers `release.yml`, which validates the tag, runs CI, builds and smoke-tests each binary on a native runner, and creates a draft release. There is no local release script. See `RELEASING.md`.
+
+---
 
 ## 7. Testing Strategy
 
@@ -632,11 +632,14 @@ Releases are driven by GitHub Actions. `prepare-release.yml` (manual dispatch) c
 
 Workflow file: `.github/workflows/release.yml`
 
-- Triggered by git tags matching `v*`
-- Builds platform-specific binaries: `consensus-darwin-arm64`,
-  `consensus-darwin-x64`, `consensus-linux-arm64`, `consensus-linux-x64`
-- Generates `checksums.sha256` via `shasum -a 256 consensus-*`
-- Creates a GitHub Release with all binaries attached
+- Triggered by pushing a new tag matching `v*`
+- Requires the tag to equal `v` + `package.json` version and the installer `CLI_VERSION`
+- Runs `ci.yml` on the tagged commit
+- Builds each binary on its own native runner and runs `--version` and `--schema`:
+  `consensus-darwin-arm64`, `consensus-darwin-x64`, `consensus-linux-arm64`,
+  `consensus-linux-x64`, `consensus-windows-x64.exe`
+- Generates `checksums.sha256` with `sha256sum`
+- Creates a draft GitHub Release; a maintainer publishes it
 - The `install.sh` script downloads from these releases
 
 **Release checklist:** See `RELEASING.md`.

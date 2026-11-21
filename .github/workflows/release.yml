@@ -1,105 +1,182 @@
 name: Release
 
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: "Release tag (e.g. v1.0.0)"
-        required: true
-        type: string
+  push:
+    tags:
+      - "v*"
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  validate:
+    name: Validate tag
+    # Only newly created tags; tag moves and deletions never release.
+    if: github.event.created && !github.event.deleted
     runs-on: ubuntu-latest
-    name: build
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
 
     steps:
-      - name: Check out repository
+      - name: Check out tagged commit
         uses: actions/checkout@v6
 
+      - name: Match tag, package version, and installer pin
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if [[ ! "$TAG" =~ $semver ]]; then
+            echo "::error::Tag '$TAG' is not v<major>.<minor>.<patch>[-prerelease]"
+            exit 1
+          fi
+          version="${TAG#v}"
+
+          package_version="$(jq -r .version package.json)"
+          if [ "$package_version" != "$version" ]; then
+            echo "::error::package.json version '$package_version' does not match tag '$TAG'"
+            exit 1
+          fi
+
+          # Read the pin as text; never execute the installer here.
+          pins="$(sed -n 's/^CLI_VERSION="\(.*\)"$/\1/p' skills/consensus/scripts/install.sh)"
+          if [ "$pins" != "$TAG" ]; then
+            echo "::error::skills/consensus/scripts/install.sh CLI_VERSION '$pins' does not match tag '$TAG'"
+            exit 1
+          fi
+
+          prerelease=false
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build ${{ matrix.asset }}
+    needs: [validate, ci]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: bun-linux-x64
+            asset: consensus-linux-x64
+          - runner: ubuntu-24.04-arm
+            target: bun-linux-arm64
+            asset: consensus-linux-arm64
+          - runner: macos-15
+            target: bun-darwin-arm64
+            asset: consensus-darwin-arm64
+          - runner: macos-15-intel
+            target: bun-darwin-x64
+            asset: consensus-darwin-x64
+          - runner: windows-2025
+            target: bun-windows-x64
+            asset: consensus-windows-x64.exe
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v6
+
+      # Uses the Bun version from package.json packageManager.
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Native builds install this platform's optional packages, unlike cross-compiles.
       - name: Compile binary
-        run: bun run build:binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ASSET: ${{ matrix.asset }}
+        run: bun build --minify --compile src/cli.ts --target="$TARGET" --outfile "$RUNNER_TEMP/release/$ASSET"
 
-      - name: Upload artifact
+      # Runs the exact file that is uploaded, outside the checkout and without node_modules.
+      - name: Smoke test binary
+        shell: bash
+        working-directory: ${{ runner.temp }}/release
+        env:
+          ASSET: ${{ matrix.asset }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual="$("./$ASSET" --version)"
+          if [ "$actual" != "consensus $VERSION" ]; then
+            echo "::error::$ASSET --version printed '$actual', expected 'consensus $VERSION'"
+            exit 1
+          fi
+          "./$ASSET" --schema > schema.json
+          bun -e 'const { schema } = await Bun.file("schema.json").json(); if (schema !== "cli.consensus/2") throw new Error("unexpected schema: " + schema);'
+          echo "$ASSET: $actual"
+
+      - name: Upload binary
         uses: actions/upload-artifact@v7
         with:
-          name: binaries
-          path: dist/consensus-*
-          if-no-files-found: error
-
-  checksums:
-    needs: [build]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-        with:
-          merge-multiple: true
-          path: dist
-
-      - name: Generate checksums
-        run: (cd dist && shasum -a 256 consensus-*) > dist/checksums.sha256
-
-      - name: Upload checksums
-        uses: actions/upload-artifact@v7
-        with:
-          name: checksums
-          path: dist/checksums.sha256
+          name: ${{ matrix.asset }}
+          path: ${{ runner.temp }}/release/${{ matrix.asset }}
           if-no-files-found: error
 
   release:
-    needs: [build, checksums]
-    if: |
-      always() &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
-      (needs.checksums.result == 'success' || needs.checksums.result == 'skipped')
+    name: Draft release
+    needs: [validate, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
-      - name: Download checksums
-        if: needs.build.result == 'success'
+      - name: Download tested binaries
         uses: actions/download-artifact@v8
         with:
-          name: checksums
+          path: release
+          pattern: consensus-*
           merge-multiple: true
-          path: dist
 
-      - name: Download binaries
-        if: needs.build.result == 'success'
-        uses: actions/download-artifact@v8
-        with:
-          merge-multiple: true
-          path: dist
-
-      - name: Determine pre-release
-        id: meta
+      - name: Check binaries and write checksums
+        working-directory: release
         run: |
-          if echo "${{ inputs.tag }}" | grep -qE '(beta|rc|[0-9]{8})'; then
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          export LC_ALL=C
+          expected=(consensus-darwin-arm64 consensus-darwin-x64 consensus-linux-arm64 consensus-linux-x64 consensus-windows-x64.exe)
+          actual=(*)
+          if [ "${actual[*]}" != "${expected[*]}" ]; then
+            echo "::error::Expected binaries '${expected[*]}', found '${actual[*]}'"
+            exit 1
           fi
+          for file in "${expected[@]}"; do
+            if [ ! -s "$file" ]; then
+              echo "::error::$file is empty"
+              exit 1
+            fi
+          done
+          # Bare file names with two spaces, as skills/consensus/scripts/install.sh expects.
+          sha256sum "${expected[@]}" > checksums.sha256
+          cat checksums.sha256
 
-      - name: Create draft GitHub release
+      # Creates or reuses a draft; publishing stays manual. Immutable releases lock published assets.
+      - name: Create draft release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.tag }}
+          tag_name: ${{ github.ref_name }}
           draft: true
+          prerelease: ${{ needs.validate.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.validate.outputs.prerelease != 'true' }}
           generate_release_notes: true
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-          make_latest: ${{ steps.meta.outputs.prerelease != 'true' }}
+          fail_on_unmatched_files: true
           files: |
-            dist/consensus-*
-            dist/checksums.sha256
+            release/consensus-*
+            release/checksums.sha256

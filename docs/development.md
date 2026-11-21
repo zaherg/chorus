@@ -168,14 +168,16 @@ Use Zod v4 for all runtime validation. Prefer `z.coerce` for number parsing from
 
 ## CI / Release
 
-Releases are automated via GitHub Actions. Run `prepare-release.yml` (manual dispatch) to bump the version, update `CHANGELOG.md`, and push a `v*` tag. The tag push triggers `release-orchestrator.yml`, which runs the test gate and creates a draft release with binaries. There is no local release script.
+Releases are automated via GitHub Actions.
+Pushing a `v*` tag triggers `release.yml`, which validates the tag against `package.json` and the installer pin, runs `ci.yml`, builds and smoke-tests each binary on a native runner, and creates a draft release.
+There is no local release script; see [RELEASING.md](../RELEASING.md) for the steps.
 
 ### Changelog
 
 Uses [git-cliff](https://github.com/orhun/git-cliff) with `cliff.toml` config:
 
 ```bash
-bun run changelog:update
+bun run changelog:update -- --tag vX.Y.Z
 ```
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
