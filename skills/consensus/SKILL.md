@@ -28,7 +28,7 @@ bin/consensus --version
 ```
 
 If installation or verification fails, stop and report the exact error.
-Do not substitute an unpinned binary.
+Do not substitute a binary from another source.
 
 Examples below use `consensus` for readability.
 Use `bin/consensus` from the skill directory, or `consensus` when it is already on `PATH`.
@@ -209,4 +209,4 @@ Remote HTTP requires `allow_insecure_custom: true`.
 `localhost` is allowed for local providers, while other private, loopback, credential-bearing, and fragmented URLs are rejected.
 
 The CLI reads its version from `package.json`.
-The skill-local installer downloads the matching pinned GitHub Release binary.
+The skill-local installer downloads the latest published GitHub Release binary and verifies its checksum.

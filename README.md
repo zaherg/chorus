@@ -82,7 +82,8 @@ cd .agents/skills/consensus
 scripts/install.sh
 ```
 
-The installer downloads the binary into `bin/consensus` under the current skill directory.
+The installer downloads the binary from the latest published stable release into `bin/consensus` under the current skill directory; pre-releases are never installed by default.
+To install a specific release, set `CLI_VERSION` at the top of `scripts/install.sh` to its tag.
 Use `scripts/install.sh --prefix DIR` to install to `DIR/consensus`.
 Use `scripts/install.sh --no-verify` only when checksum verification must be skipped explicitly.
 
@@ -305,7 +306,7 @@ The CLI reads its version from `package.json` at build time.
 | Provider timeouts | Increase `provider_timeout_ms` in config |
 | "No API key configured" | Add the required key to `~/.config/chorus/config.json` |
 | Binary not found | Run `scripts/install.sh` from the skill directory |
-| `consensus --version` fails with `Cannot require module @basetenlabs/performance-client-...` | The `v0.0.7` and `v0.1.0` ARM64 binaries load Baseten's native embeddings client before reading config; [build from current source](#from-source) instead. |
+| `consensus --version` fails with `Cannot require module @basetenlabs/performance-client-...` | The `v0.0.7` and `v0.1.0` binaries load Baseten's native embeddings client before reading config, and their installer is pinned to them. Delete the installed skill folders and reinstall with `npx skills add zaherg/chorus` to get the latest release. |
 
 ## License
 

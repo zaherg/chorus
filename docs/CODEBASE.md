@@ -486,6 +486,7 @@ Documents the `consensus` CLI for agents. Covers:
 Platform-specific binary installer. Downloads the correct `consensus-{platform}-{arch}`
 binary from GitHub Releases. Features:
 - Platform detection (Darwin/Linux, arm64/x64)
+- Latest published stable release by default (resolved once via `/releases/latest`; pre-release tags rejected); the release in `CLI_VERSION` when that constant is set
 - SHA-256 checksum verification (default on)
 - `--prefix DIR` for custom install location
 - `--no-verify` to skip checksum check
@@ -504,7 +505,7 @@ Code, Codex, OpenCode, GitHub Copilot, Pi Coding Agent) for sub-tasks. Covers:
 
 ## 6. Release Workflows
 
-Releases are driven by GitHub Actions. A maintainer prepares a release commit with matching `package.json` version, `skills/consensus/scripts/install.sh` `CLI_VERSION`, and git-cliff changelog, then pushes a `v*` tag. The tag push triggers `release.yml`, which validates the tag, runs CI, builds and smoke-tests each binary on a native runner, and creates a draft release. There is no local release script. See `RELEASING.md`.
+Releases are driven by GitHub Actions. A maintainer prepares a release commit with the `package.json` version and git-cliff changelog, then pushes a `v*` tag. The tag push triggers `release.yml`, which validates the tag, runs CI, builds and smoke-tests each binary on a native runner, and creates a draft release. There is no local release script. See `RELEASING.md`.
 
 ---
 
@@ -633,14 +634,15 @@ Releases are driven by GitHub Actions. A maintainer prepares a release commit wi
 Workflow file: `.github/workflows/release.yml`
 
 - Triggered by pushing a new tag matching `v*`
-- Requires the tag to equal `v` + `package.json` version and the installer `CLI_VERSION`
+- Requires the tag to equal `v` + `package.json` version
 - Runs `ci.yml` on the tagged commit
 - Builds each binary on its own native runner and runs `--version` and `--schema`:
   `consensus-darwin-arm64`, `consensus-darwin-x64`, `consensus-linux-arm64`,
   `consensus-linux-x64`, `consensus-windows-x64.exe`
 - Generates `checksums.sha256` with `sha256sum`
 - Creates a draft GitHub Release; a maintainer publishes it
-- The `install.sh` script downloads from these releases
+- Requires the installer `CLI_VERSION` to be empty for stable releases, or equal to the tag for pre-releases
+- The `install.sh` script downloads the latest published stable release, or the release in `CLI_VERSION`
 
 **Release checklist:** See `RELEASING.md`.
 

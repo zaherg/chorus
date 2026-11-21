@@ -26,7 +26,7 @@ jobs:
       - name: Check out tagged commit
         uses: actions/checkout@v6
 
-      - name: Match tag, package version, and installer pin
+      - name: Match tag, package version, and installer CLI_VERSION
         id: version
         env:
           TAG: ${{ github.ref_name }}
@@ -45,17 +45,24 @@ jobs:
             exit 1
           fi
 
-          # Read the pin as text; never execute the installer here.
-          pins="$(sed -n 's/^CLI_VERSION="\(.*\)"$/\1/p' skills/consensus/scripts/install.sh)"
-          if [ "$pins" != "$TAG" ]; then
-            echo "::error::skills/consensus/scripts/install.sh CLI_VERSION '$pins' does not match tag '$TAG'"
-            exit 1
-          fi
-
           prerelease=false
           if [[ "$version" == *-* ]]; then
             prerelease=true
           fi
+
+          # Stable releases must leave CLI_VERSION empty so installs follow the latest stable release;
+          # a pre-release may set it to its own tag. Read as text; never execute the installer here.
+          installer=skills/consensus/scripts/install.sh
+          if [ "$(grep -c '^CLI_VERSION="[^"]*"$' "$installer")" != 1 ]; then
+            echo "::error::$installer must contain exactly one CLI_VERSION=\"...\" line"
+            exit 1
+          fi
+          cli_version="$(sed -n 's/^CLI_VERSION="\(.*\)"$/\1/p' "$installer")"
+          if [ -n "$cli_version" ] && { [ "$prerelease" = false ] || [ "$cli_version" != "$TAG" ]; }; then
+            echo "::error::$installer CLI_VERSION is '$cli_version'; it must be empty for a stable release, or '$TAG' for this pre-release"
+            exit 1
+          fi
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
@@ -174,7 +181,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           draft: true
           prerelease: ${{ needs.validate.outputs.prerelease == 'true' }}
-          make_latest: ${{ needs.validate.outputs.prerelease != 'true' }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |

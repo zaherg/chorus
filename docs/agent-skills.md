@@ -24,7 +24,7 @@ scripts/install.sh
 bin/consensus --version
 ```
 
-The installer downloads the pinned GitHub Release binary. This is separate from npm/bun installation -- the skill bundles its own binary.
+The installer downloads the binary from the latest published stable GitHub Release, or the release named by `CLI_VERSION` in `scripts/install.sh` when it is set. This is separate from npm/bun installation -- the skill bundles its own binary.
 
 ### Usage Patterns
 

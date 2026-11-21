@@ -25,7 +25,7 @@ skills/consensus/scripts/install.sh
 bin/consensus --version
 ```
 
-The installer downloads the pinned GitHub Release binary into `bin/consensus`. Flags:
+The installer downloads the latest published stable GitHub Release binary into `bin/consensus`, or the release named by `CLI_VERSION` at the top of the script when it is set. Flags:
 
 - `--prefix DIR` -- install to `DIR/consensus`
 - `--no-verify` -- skip checksum verification

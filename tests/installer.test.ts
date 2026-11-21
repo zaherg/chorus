@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,10 +24,12 @@ const writeExecutable = async (path: string, content: string): Promise<void> => 
     await chmod(path, 0o755);
 };
 
-const createCopiedSkill = async (): Promise<string> => {
+const createCopiedSkill = async (cliVersion = ""): Promise<string> => {
     const dir = await tempDir("chorus-installer");
     await mkdir(join(dir, "scripts"), { recursive: true });
-    await cp(installerPath, join(dir, "scripts", "install.sh"));
+    const installer = await readFile(installerPath, "utf8");
+    expect(installer).toContain('\nCLI_VERSION=""\n');
+    await writeFile(join(dir, "scripts", "install.sh"), installer.replace('\nCLI_VERSION=""\n', `\nCLI_VERSION="${cliVersion}"\n`));
     await chmod(join(dir, "scripts", "install.sh"), 0o755);
     return dir;
 };
@@ -37,11 +39,15 @@ const createTooling = async ({
     arch = "arm64",
     binaryName = "consensus-darwin-arm64",
     checksum = "valid",
+    latestUrl = "https://github.com/zaherg/chorus/releases/tag/v9.9.9",
+    latestFails = false,
 }: {
     platform?: string;
     arch?: string;
     binaryName?: string;
     checksum?: "valid" | "invalid";
+    latestUrl?: string;
+    latestFails?: boolean;
 } = {}): Promise<{ binDir: string; logPath: string }> => {
     const binDir = await tempDir("chorus-tools");
     const logPath = join(binDir, "calls.log");
@@ -71,8 +77,8 @@ out=""
 url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -o)
-      out="$2"
+    -o | -w)
+      [ "$1" = -o ] && out="$2"
       shift 2
       ;;
     -*)
@@ -86,6 +92,9 @@ while [ "$#" -gt 0 ]; do
 done
 printf 'curl %s\\n' "$url" >> '${logPath}'
 case "$url" in
+  */releases/latest)
+    ${latestFails ? "exit 22" : `printf '%s' '${latestUrl}'`}
+    ;;
   */checksums.sha256)
     printf '%s  %s\\n' '${checksumValue}' '${binaryName}' > "$out"
     ;;
@@ -133,7 +142,7 @@ const runInstaller = async (
 };
 
 describe("skill-local installer", () => {
-    it("installs the matching released binary under the copied skill directory by default", async () => {
+    it("installs the latest released binary under the copied skill directory by default", async () => {
         const skillDir = await createCopiedSkill();
         const { binDir, logPath } = await createTooling();
         const installedPath = join(skillDir, "bin", "consensus");
@@ -144,13 +153,77 @@ describe("skill-local installer", () => {
         expect(await readFile(installedPath, "utf8")).toBe("released binary\n");
         expect((await stat(installedPath)).mode & 0o111).toBeGreaterThan(0);
         const log = await readFile(logPath, "utf8");
-        expect(log).toContain("consensus-darwin-arm64");
+        expect(log).toContain("curl https://github.com/zaherg/chorus/releases/latest\n");
+        expect(log).toContain("curl https://github.com/zaherg/chorus/releases/download/v9.9.9/consensus-darwin-arm64\n");
+        expect(log).toContain("curl https://github.com/zaherg/chorus/releases/download/v9.9.9/checksums.sha256\n");
         const xattrCalls = log.split("\n").filter((line) => line.startsWith("xattr "));
         expect(xattrCalls).toEqual([
             expect.stringMatching(/xattr -d com\.apple\.quarantine .+\/consensus-darwin-arm64$/),
             `xattr -d com.apple.quarantine ${installedPath}.tmp`,
             `xattr -d com.apple.quarantine ${installedPath}`,
         ]);
+    });
+
+    it("installs the CLI_VERSION release without looking up the latest", async () => {
+        const skillDir = await createCopiedSkill("v0.2.0-rc.1");
+        const { binDir, logPath } = await createTooling();
+
+        const result = await runInstaller(skillDir, binDir);
+
+        expect(result.exitCode).toBe(0);
+        const log = await readFile(logPath, "utf8");
+        expect(log).not.toContain("releases/latest");
+        expect(log).toContain("curl https://github.com/zaherg/chorus/releases/download/v0.2.0-rc.1/consensus-darwin-arm64\n");
+    });
+
+    it("rejects release tags that are not v<major>.<minor>.<patch>", async () => {
+        const skillDir = await createCopiedSkill("../v1.2.3");
+        const { binDir, logPath } = await createTooling();
+
+        const result = await runInstaller(skillDir, binDir);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("is not a release tag");
+        await expect(readFile(logPath, "utf8")).rejects.toThrow();
+    });
+
+    it("never installs a pre-release by default", async () => {
+        const skillDir = await createCopiedSkill();
+        const { binDir, logPath } = await createTooling({
+            latestUrl: "https://github.com/zaherg/chorus/releases/tag/v1.0.0-rc.1",
+        });
+
+        const result = await runInstaller(skillDir, binDir);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("is not a stable release tag");
+        expect(await readFile(logPath, "utf8")).not.toContain("releases/download");
+        await expect(stat(join(skillDir, "bin", "consensus"))).rejects.toThrow();
+    });
+
+    it("fails without installing when no published release exists", async () => {
+        const skillDir = await createCopiedSkill();
+        // GitHub redirects /releases/latest to /releases when there is no published release.
+        const { binDir, logPath } = await createTooling({ latestUrl: "https://github.com/zaherg/chorus/releases" });
+
+        const result = await runInstaller(skillDir, binDir);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("latest release lookup");
+        expect(await readFile(logPath, "utf8")).not.toContain("releases/download");
+        await expect(stat(join(skillDir, "bin", "consensus"))).rejects.toThrow();
+    });
+
+    it("fails without installing when the latest release lookup fails", async () => {
+        const skillDir = await createCopiedSkill();
+        const { binDir, logPath } = await createTooling({ latestFails: true });
+
+        const result = await runInstaller(skillDir, binDir);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).toContain("could not look up the latest release");
+        expect(await readFile(logPath, "utf8")).not.toContain("releases/download");
+        await expect(stat(join(skillDir, "bin", "consensus"))).rejects.toThrow();
     });
 
     it("aborts on checksum mismatch without installing the executable", async () => {
