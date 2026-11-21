@@ -437,7 +437,6 @@ The broker never suffix-matches model IDs.
 - **Path allowlist:** Only files under these roots can be embedded:
   - Current working directory
   - System temp directory (`os.tmpdir()`)
-  - `~/.claude`, `~/.codex`, `~/.copilot`, `~/.opencode`
 - **Token budget:** 50 k tokens max (or 40% of model context window,
   whichever is smaller). Files that would exceed the budget are skipped.
 - **Deduplication:** Duplicate paths are resolved via `new Set()`.

@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import { estimateTokenCount } from "@/utils/helpers";
@@ -13,17 +13,7 @@ let _allowedRoots: string[] | undefined;
 
 const getAllowedRoots = () => {
     if (_allowedRoots) return _allowedRoots;
-    const cwd = realpathSync(process.cwd());
-    const tmp = tmpdir();
-    const home = homedir();
-    const candidateRoots = [
-        cwd,
-        tmp,
-        resolve(home, ".claude"),
-        resolve(home, ".codex"),
-        resolve(home, ".copilot"),
-        resolve(home, ".opencode"),
-    ];
+    const candidateRoots = [realpathSync(process.cwd()), tmpdir()];
     _allowedRoots = [];
     for (const root of candidateRoots) {
         try {
