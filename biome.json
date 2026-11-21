@@ -1,5 +1,5 @@
 {
-    "$schema": "https://biomejs.dev/schemas/latest/schema.json",
+    "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
     "assist": {
         "actions": {
             "source": {
@@ -17,6 +17,11 @@
                 }
             }
         }
+    },
+    "vcs": {
+        "enabled": true,
+        "clientKind": "git",
+        "useIgnoreFile": true
     },
     "files": {
         "includes": ["**", "!dist"]
@@ -49,15 +54,20 @@
             "trailingCommas": "all"
         }
     },
+    "markdown": {
+        "formatter": {
+            "enabled": false
+        }
+    },
     "overrides": [
         {
-            "includes": ["*.{yml,yaml}"],
+            "includes": ["**/*.{yml,yaml}"],
             "formatter": {
                 "indentWidth": 2
             }
         },
         {
-            "includes": ["{compose,docker-compose}.{yml,yaml}"],
+            "includes": ["**/{compose,docker-compose}.{yml,yaml}"],
             "formatter": {
                 "indentWidth": 4
             }

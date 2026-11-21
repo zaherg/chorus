@@ -29,7 +29,10 @@ const createCopiedSkill = async (cliVersion = ""): Promise<string> => {
     await mkdir(join(dir, "scripts"), { recursive: true });
     const installer = await readFile(installerPath, "utf8");
     expect(installer).toContain('\nCLI_VERSION=""\n');
-    await writeFile(join(dir, "scripts", "install.sh"), installer.replace('\nCLI_VERSION=""\n', `\nCLI_VERSION="${cliVersion}"\n`));
+    await writeFile(
+        join(dir, "scripts", "install.sh"),
+        installer.replace('\nCLI_VERSION=""\n', `\nCLI_VERSION="${cliVersion}"\n`),
+    );
     await chmod(join(dir, "scripts", "install.sh"), 0o755);
     return dir;
 };
@@ -154,7 +157,9 @@ describe("skill-local installer", () => {
         expect((await stat(installedPath)).mode & 0o111).toBeGreaterThan(0);
         const log = await readFile(logPath, "utf8");
         expect(log).toContain("curl https://github.com/zaherg/chorus/releases/latest\n");
-        expect(log).toContain("curl https://github.com/zaherg/chorus/releases/download/v9.9.9/consensus-darwin-arm64\n");
+        expect(log).toContain(
+            "curl https://github.com/zaherg/chorus/releases/download/v9.9.9/consensus-darwin-arm64\n",
+        );
         expect(log).toContain("curl https://github.com/zaherg/chorus/releases/download/v9.9.9/checksums.sha256\n");
         const xattrCalls = log.split("\n").filter((line) => line.startsWith("xattr "));
         expect(xattrCalls).toEqual([
@@ -173,7 +178,9 @@ describe("skill-local installer", () => {
         expect(result.exitCode).toBe(0);
         const log = await readFile(logPath, "utf8");
         expect(log).not.toContain("releases/latest");
-        expect(log).toContain("curl https://github.com/zaherg/chorus/releases/download/v0.2.0-rc.1/consensus-darwin-arm64\n");
+        expect(log).toContain(
+            "curl https://github.com/zaherg/chorus/releases/download/v0.2.0-rc.1/consensus-darwin-arm64\n",
+        );
     });
 
     it("rejects release tags that are not v<major>.<minor>.<patch>", async () => {

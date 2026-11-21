@@ -18,10 +18,10 @@
         "build": "bun build --target=bun --minify --banner '#!/usr/bin/env bun' src/cli.ts --outdir dist",
         "build:binary": "bun build --minify --compile src/cli.ts --target=bun-darwin-arm64 --outfile dist/consensus-darwin-arm64 && bun build --minify --compile src/cli.ts --target=bun-darwin-x64 --outfile dist/consensus-darwin-x64 && bun build --minify --compile src/cli.ts --target=bun-linux-x64 --outfile dist/consensus-linux-x64 && bun build --minify --compile src/cli.ts --target=bun-linux-arm64 --outfile dist/consensus-linux-arm64 && bun build --minify --compile src/cli.ts --target=bun-windows-x64 --outfile dist/consensus-windows-x64.exe",
         "dev": "bun run src/cli.ts",
-        "lint:check": "bunx --yes biome check .",
-        "lint:fix": "bunx --yes biome check --write .",
-        "format:fix": "bunx --yes biome format --write .",
-        "format:check": "bunx --yes biome format .",
+        "lint:check": "biome check .",
+        "lint:fix": "biome check --write .",
+        "format:fix": "biome format --write .",
+        "format:check": "biome format .",
         "prepack": "bun run build:binary",
         "test": "bun run build && bun test tests/*.test.ts --isolate",
         "changelog:update": "git-cliff --config .github/config/cliff.toml -o CHANGELOG.md"
@@ -40,6 +40,7 @@
         "zod": "^4.6.7"
     },
     "devDependencies": {
+        "@biomejs/biome": "2.6.8",
         "@types/bun": "^1.4.5",
         "@types/minimist": "^1.2.5",
         "@types/node": "26.1.1",
