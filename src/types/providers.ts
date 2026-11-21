@@ -95,6 +95,7 @@ export const CacheInfoSchema = z.object({
     status: CacheStatusSchema,
     fetched_at: z.string().min(1),
     expires_at: z.string().min(1),
+    warning: z.string().optional(),
 });
 export type CacheInfo = z.infer<typeof CacheInfoSchema>;
 
@@ -105,30 +106,45 @@ export type CacheInfo = z.infer<typeof CacheInfoSchema>;
 export const ModelsListResponseSchema = z.object({
     schema: z.literal("models.list/1"),
     cache: CacheInfoSchema,
-    providers: z.record(z.string(), ProviderListEntrySchema),
+    providers: z.partialRecord(ProviderIdSchema, ProviderListEntrySchema),
 });
 export type ModelsListResponse = z.infer<typeof ModelsListResponseSchema>;
+
+/** Error codes emitted in a `models.list.error/1` JSON payload. */
+export const modelsListErrorCodeValues = ["catalog_unavailable", "config_load_failed"] as const;
+export const ModelsListErrorCodeSchema = z.enum(modelsListErrorCodeValues);
+export type ModelsListErrorCode = z.infer<typeof ModelsListErrorCodeSchema>;
+
+/**
+ * Error response for `consensus list-models --json` when configuration or
+ * catalog loading fails.
+ */
+export const ModelsListErrorSchema = z.object({
+    schema: z.literal("models.list.error/1"),
+    error: z.object({
+        code: ModelsListErrorCodeSchema,
+        message: z.string(),
+    }),
+});
+export type ModelsListError = z.infer<typeof ModelsListErrorSchema>;
 
 /**
  * Raw models.dev provider-model entry, validated by `ProviderModelEntrySchema`.
  * Only fields the broker actually consumes are typed; the catalog may include
- * more keys which are accepted by `.passthrough()`.
+ * more keys which are accepted by `z.looseObject()`.
  */
-export const ProviderModelEntrySchema = z
-    .object({
-        name: z.string().optional(),
-        limit: z
-            .object({
-                context: z.number().optional(),
-                output: z.number().optional(),
-            })
-            .passthrough()
-            .optional(),
-        reasoning: z.boolean().optional(),
-        tool_call: z.boolean().optional(),
-        structured_output: z.boolean().optional(),
-    })
-    .passthrough();
+export const ProviderModelEntrySchema = z.looseObject({
+    name: z.string().nullish(),
+    limit: z
+        .looseObject({
+            context: z.number().nullish(),
+            output: z.number().nullish(),
+        })
+        .nullish(),
+    reasoning: z.boolean().nullish(),
+    tool_call: z.boolean().nullish(),
+    structured_output: z.boolean().nullish(),
+});
 
 /**
  * Top-level shape of the `https://models.dev/catalog.json` payload. Both
@@ -146,7 +162,7 @@ export type CatalogJson = z.infer<typeof CatalogJsonSchema>;
  * catalog stored -- validated lazily by the broker).
  */
 export const ProviderCatalogSchema = z.object({
-    models: z.record(z.string(), ProviderModelEntrySchema),
+    models: z.record(z.string(), z.unknown()),
 });
 export type ProviderCatalog = z.infer<typeof ProviderCatalogSchema>;
 
@@ -158,5 +174,6 @@ export const CacheMetadataSchema = z.object({
     fetched_at: z.string().min(1),
     expires_at: z.string().min(1),
     source: z.string().min(1),
+    etag: z.string().min(1).optional(),
 });
 export type CacheMetadata = z.infer<typeof CacheMetadataSchema>;

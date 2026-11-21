@@ -22,6 +22,7 @@ import { resolve } from "node:path";
 import {
     type BrokerModelInfo,
     BrokerModelInfoSchema,
+    type CacheInfo,
     type CacheMetadata,
     CacheMetadataSchema,
     type CacheStatus,
@@ -80,12 +81,23 @@ export type FetchCatalogError = {
     message: string;
 };
 
-export type FetchCatalogSuccess = {
-    ok: true;
-    catalog: unknown;
-    fetchedAt: string;
-    source: string;
-};
+export type FetchCatalogSuccess =
+    | {
+          ok: true;
+          notModified?: false;
+          catalog: CatalogJson;
+          fetchedAt: string;
+          source: string;
+          etag?: string;
+      }
+    | {
+          ok: true;
+          notModified: true;
+          catalog?: undefined;
+          fetchedAt: string;
+          source: string;
+          etag?: string;
+      };
 
 export type FetchCatalogResult = FetchCatalogSuccess | { ok: false; error: FetchCatalogError };
 
@@ -94,7 +106,7 @@ export type ReadCacheStatus = "fresh" | "stale" | "missing" | "invalid";
 export type ReadCacheResult = {
     status: ReadCacheStatus;
     metadata?: CacheMetadata;
-    catalog?: unknown;
+    catalog?: CatalogJson;
     reason?: string;
 };
 
@@ -129,19 +141,22 @@ const isAbortLikeError = (err: unknown) => {
 export const fetchCatalog = async (
     fetchFn: FetchFn,
     now: () => Date = () => new Date(),
-    options: { timeoutMs?: number; userAgent?: string } = {},
+    options: { timeoutMs?: number; userAgent?: string; etag?: string } = {},
 ): Promise<FetchCatalogResult> => {
-    const headers = {
+    const headers: Record<string, string> = {
         Accept: "application/json",
         "User-Agent": options.userAgent ?? DEFAULT_USER_AGENT,
     };
+    if (options.etag) {
+        headers["If-None-Match"] = options.etag;
+    }
     const signal = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS);
 
     let response: Response;
     try {
         response = await fetchFn(MODELS_DEV_CATALOG_URL, { headers, signal });
     } catch (err) {
-        if (isAbortLikeError(err)) {
+        if (isAbortLikeError(err) || signal.aborted) {
             return {
                 ok: false,
                 error: { code: "timeout", message: getErrorMessage(err) },
@@ -150,6 +165,19 @@ export const fetchCatalog = async (
         return {
             ok: false,
             error: { code: "network", message: getErrorMessage(err) },
+        };
+    }
+
+    const rawEtag = response.headers.get("etag")?.trim();
+    const etag = rawEtag && rawEtag.length > 0 ? rawEtag : undefined;
+
+    if (response.status === 304) {
+        return {
+            ok: true,
+            notModified: true,
+            fetchedAt: now().toISOString(),
+            source: MODELS_DEV_CATALOG_URL,
+            ...(etag !== undefined ? { etag } : {}),
         };
     }
 
@@ -205,7 +233,7 @@ export const fetchCatalog = async (
                 if (chunk.value) {
                     totalBytes += chunk.value.byteLength;
                     if (totalBytes > MAX_RESPONSE_BYTES) {
-                        reader.cancel();
+                        reader.cancel().catch(() => {});
                         return {
                             ok: false,
                             error: {
@@ -221,6 +249,12 @@ export const fetchCatalog = async (
             body += decoder.decode();
         } catch (err) {
             reader.cancel().catch(() => {});
+            if (isAbortLikeError(err) || signal.aborted) {
+                return {
+                    ok: false,
+                    error: { code: "timeout", message: getErrorMessage(err) },
+                };
+            }
             return {
                 ok: false,
                 error: { code: "network", message: getErrorMessage(err) },
@@ -228,7 +262,20 @@ export const fetchCatalog = async (
         }
     } else {
         // Fallback when body stream is unavailable (should not happen in Bun).
-        body = await response.text();
+        try {
+            body = await response.text();
+        } catch (err) {
+            if (isAbortLikeError(err) || signal.aborted) {
+                return {
+                    ok: false,
+                    error: { code: "timeout", message: getErrorMessage(err) },
+                };
+            }
+            return {
+                ok: false,
+                error: { code: "network", message: getErrorMessage(err) },
+            };
+        }
         const byteLength = Buffer.byteLength(body, "utf8");
         if (byteLength > MAX_RESPONSE_BYTES) {
             return {
@@ -269,6 +316,7 @@ export const fetchCatalog = async (
         catalog: validation.data,
         fetchedAt: now().toISOString(),
         source: MODELS_DEV_CATALOG_URL,
+        ...(etag !== undefined ? { etag } : {}),
     };
 };
 
@@ -357,31 +405,49 @@ export const writeCache = (
 
 // === Normalization ===
 
-const finitePositive = (value: number | undefined) => {
-    if (value === undefined) {
-        return undefined;
+const writeMetadata = (
+    writer: FileWriter,
+    metadata: CacheMetadata,
+): { ok: true } | { ok: false; code: "io_error"; message: string } => {
+    let metadataJson: string;
+    try {
+        metadataJson = JSON.stringify(metadata);
+    } catch (err) {
+        return {
+            ok: false,
+            code: "io_error",
+            message: getErrorMessage(err),
+        };
     }
-    if (!Number.isFinite(value) || value <= 0) {
+
+    return writer(METADATA_RELATIVE_PATH, metadataJson, {
+        mode: 0o600,
+        tempSuffix: ".tmp",
+    });
+};
+
+const finitePositive = (value: number | null | undefined) => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
         return undefined;
     }
     return value;
 };
 
-const findCanonicalModelId = (
-    modelId: string,
-    modelsDevProviderKey: string,
-    canonicalModels: Record<string, unknown>,
-) => {
-    for (const [key, value] of Object.entries(canonicalModels)) {
+const buildCanonicalModelIndex = (canonicalModels: Record<string, unknown>): Map<string, string> => {
+    const index = new Map<string, string>();
+    for (const [canonicalKey, value] of Object.entries(canonicalModels)) {
         if (value === null || typeof value !== "object") {
             continue;
         }
         const record = value as { id?: unknown; provider?: unknown };
-        if (record.id === modelId && record.provider === modelsDevProviderKey) {
-            return key;
+        if (typeof record.provider === "string" && typeof record.id === "string") {
+            const lookupKey = `${record.provider}\0${record.id}`;
+            if (!index.has(lookupKey)) {
+                index.set(lookupKey, canonicalKey);
+            }
         }
     }
-    return undefined;
+    return index;
 };
 
 export const normalizeProviderModels = (
@@ -389,7 +455,9 @@ export const normalizeProviderModels = (
     modelsDevProviderKey: string,
     providerCatalog: ProviderCatalog,
     canonicalModels: Record<string, unknown>,
+    canonicalIndex?: Map<string, string>,
 ) => {
+    const index = canonicalIndex ?? buildCanonicalModelIndex(canonicalModels);
     const out: BrokerModelInfo[] = [];
     for (const [modelId, rawEntry] of Object.entries(providerCatalog.models)) {
         const entryValidation = ProviderModelEntrySchema.safeParse(rawEntry);
@@ -398,18 +466,18 @@ export const normalizeProviderModels = (
         }
         const entry = entryValidation.data;
 
-        const canonical = findCanonicalModelId(modelId, modelsDevProviderKey, canonicalModels);
+        const canonical = index.get(`${modelsDevProviderKey}\0${modelId}`);
 
         const candidate = {
             route_id: `${providerId}/${modelId}`,
             provider: providerId,
             provider_model_id: modelId,
             display_name: entry.name ?? modelId,
-            context_window: finitePositive(entry.limit?.context),
-            output_limit: finitePositive(entry.limit?.output),
-            supports_reasoning: entry.reasoning,
-            supports_tools: entry.tool_call,
-            supports_structured_output: entry.structured_output,
+            context_window: finitePositive(entry.limit?.context ?? undefined),
+            output_limit: finitePositive(entry.limit?.output ?? undefined),
+            supports_reasoning: entry.reasoning ?? undefined,
+            supports_tools: entry.tool_call ?? undefined,
+            supports_structured_output: entry.structured_output ?? undefined,
             ...(canonical !== undefined ? { canonical_model_id: canonical } : {}),
         };
 
@@ -439,7 +507,7 @@ export type LoadCatalogOptions = {
 export type LoadCatalogSuccess = {
     ok: true;
     schema: "models.list/1";
-    cache: { status: CacheStatus; fetched_at: string; expires_at: string };
+    cache: CacheInfo;
     providers: Record<ProviderId, ProviderListEntry>;
     warning?: string;
 };
@@ -451,17 +519,22 @@ export type LoadCatalogFailure = {
 
 export type LoadCatalogResult = LoadCatalogSuccess | LoadCatalogFailure;
 
-const buildMetadata = (fetchedAt: string, source: string, now: () => Date): CacheMetadata => {
+const buildMetadata = (fetchedAt: string, source: string, now: () => Date, etag?: string): CacheMetadata => {
     const expiresAt = new Date(now().getTime() + CACHE_TTL_MS).toISOString();
     return {
         schema: CACHE_SCHEMA,
         fetched_at: fetchedAt,
         expires_at: expiresAt,
         source,
+        ...(etag !== undefined ? { etag } : {}),
     };
 };
 
-const buildProviderEntry = (providerId: ProviderId, catalog: CatalogJson): ProviderListEntry => {
+const buildProviderEntry = (
+    providerId: ProviderId,
+    catalog: CatalogJson,
+    canonicalIndex: Map<string, string>,
+): ProviderListEntry => {
     if (!isCatalogBackedProvider(providerId)) {
         return { status: "passthrough", models: [] };
     }
@@ -479,7 +552,13 @@ const buildProviderEntry = (providerId: ProviderId, catalog: CatalogJson): Provi
     }
     return {
         status: "catalog",
-        models: normalizeProviderModels(providerId, modelsDevKey, providerCatalogValidation.data, catalog.models),
+        models: normalizeProviderModels(
+            providerId,
+            modelsDevKey,
+            providerCatalogValidation.data,
+            catalog.models,
+            canonicalIndex,
+        ),
     };
 };
 
@@ -500,7 +579,7 @@ export const loadCatalog = async (options: LoadCatalogOptions): Promise<LoadCata
 
         const cacheState = readCache(reader, now);
 
-        let activeCatalog: unknown;
+        let activeCatalog: CatalogJson | undefined;
         let activeMetadata: CacheMetadata | undefined;
         let warning: string | undefined;
         let cacheStatusValue: CacheStatus = "stale";
@@ -510,9 +589,12 @@ export const loadCatalog = async (options: LoadCatalogOptions): Promise<LoadCata
             activeMetadata = cacheState.metadata;
             cacheStatusValue = "fresh";
         } else {
+            const conditionalEtag =
+                !forceRefresh && cacheState.catalog !== undefined ? cacheState.metadata?.etag : undefined;
             const fetched = await fetchCatalog(fetchFn, now, {
                 userAgent,
                 timeoutMs,
+                etag: conditionalEtag,
             });
             if (!fetched.ok) {
                 if (cacheState.status === "stale" && cacheState.metadata && cacheState.catalog !== undefined) {
@@ -529,25 +611,38 @@ export const loadCatalog = async (options: LoadCatalogOptions): Promise<LoadCata
                         },
                     };
                 }
-            } else {
-                activeCatalog = fetched.catalog;
-                const fetchedAt = fetched.fetchedAt;
-                activeMetadata = buildMetadata(fetchedAt, fetched.source, now);
-                const writeResult = writeCache(writer, activeCatalog, activeMetadata);
-                if (!writeResult.ok) {
+            } else if (fetched.notModified) {
+                if (cacheState.catalog !== undefined && cacheState.metadata) {
+                    activeCatalog = cacheState.catalog;
+                    const resolvedEtag = fetched.etag ?? cacheState.metadata.etag;
+                    activeMetadata = buildMetadata(fetched.fetchedAt, fetched.source, now, resolvedEtag);
+                    const writeResult = writeMetadata(writer, activeMetadata);
+                    if (!writeResult.ok) {
+                        warning = `cache write failed: ${writeResult.message}`;
+                    }
+                    cacheStatusValue = "fresh";
+                } else {
                     return {
                         ok: false,
                         error: {
                             code: "catalog_unavailable",
-                            message: `cache write failed: ${writeResult.message}`,
+                            message: "unexpected 304 Not Modified without cached catalog",
                         },
                     };
+                }
+            } else {
+                activeCatalog = fetched.catalog;
+                const fetchedAt = fetched.fetchedAt;
+                activeMetadata = buildMetadata(fetchedAt, fetched.source, now, fetched.etag);
+                const writeResult = writeCache(writer, activeCatalog, activeMetadata);
+                if (!writeResult.ok) {
+                    warning = `cache write failed: ${writeResult.message}`;
                 }
                 cacheStatusValue = "fresh";
             }
         }
 
-        if (!activeMetadata) {
+        if (!activeMetadata || activeCatalog === undefined) {
             return {
                 ok: false,
                 error: {
@@ -557,21 +652,10 @@ export const loadCatalog = async (options: LoadCatalogOptions): Promise<LoadCata
             };
         }
 
-        const validation = CatalogJsonSchema.safeParse(activeCatalog);
-        if (!validation.success) {
-            return {
-                ok: false,
-                error: {
-                    code: "catalog_unavailable",
-                    message: "catalog payload failed schema validation",
-                },
-            };
-        }
-        const catalog = validation.data;
-
+        const canonicalIndex = buildCanonicalModelIndex(activeCatalog.models);
         const providers = {} as Record<ProviderId, ProviderListEntry>;
         for (const providerId of providerIdValues) {
-            providers[providerId] = buildProviderEntry(providerId, catalog);
+            providers[providerId] = buildProviderEntry(providerId, activeCatalog, canonicalIndex);
         }
 
         const cacheStatusChecked = CacheStatusSchema.parse(cacheStatusValue);
@@ -582,6 +666,7 @@ export const loadCatalog = async (options: LoadCatalogOptions): Promise<LoadCata
                 status: cacheStatusChecked,
                 fetched_at: activeMetadata.fetched_at,
                 expires_at: activeMetadata.expires_at,
+                ...(warning !== undefined ? { warning } : {}),
             },
             providers,
         };
@@ -597,11 +682,26 @@ export const loadCatalog = async (options: LoadCatalogOptions): Promise<LoadCata
             };
         }
 
+        const validatedProviders = {} as Record<ProviderId, ProviderListEntry>;
+        for (const providerId of providerIdValues) {
+            const entry = payloadValidation.data.providers[providerId];
+            if (entry === undefined) {
+                return {
+                    ok: false,
+                    error: {
+                        code: "catalog_unavailable",
+                        message: `list-models payload missing provider entry: ${providerId}`,
+                    },
+                };
+            }
+            validatedProviders[providerId] = entry;
+        }
+
         const result: LoadCatalogSuccess = {
             ok: true,
             schema: "models.list/1",
             cache: payloadValidation.data.cache,
-            providers: payloadValidation.data.providers as Record<ProviderId, ProviderListEntry>,
+            providers: validatedProviders,
         };
         if (warning !== undefined) {
             result.warning = warning;

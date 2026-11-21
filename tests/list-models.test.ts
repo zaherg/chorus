@@ -1,31 +1,78 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 
 import { parseListModelsArgs, runListModelsCommand } from "@/commands/list-models";
-import { BrokerModelInfoSchema, type ModelsListResponse, type ProviderListEntry } from "@/types/providers";
+import * as realConfig from "@/config";
+import * as realModelCatalog from "@/providers/model-catalog";
+import * as realRegistry from "@/providers/registry";
+import {
+    BrokerModelInfoSchema,
+    ModelsListErrorSchema,
+    type ModelsListResponse,
+    ModelsListResponseSchema,
+    type ProviderId,
+    type ProviderListEntry,
+} from "@/types/providers";
+import * as realLogger from "@/utils/logger";
 import { captureOutput, testConfig } from "./helpers";
 
+const realConfigSnapshot = { ...realConfig };
+const realLoggerSnapshot = { ...realLogger };
+const realRegistrySnapshot = { ...realRegistry };
+const realModelCatalogSnapshot = { ...realModelCatalog };
+
+let loadConfigHandler: typeof realConfig.loadConfig = realConfigSnapshot.loadConfig;
+let configureLoggingHandler: typeof realLogger.configureLogging = realLoggerSnapshot.configureLogging;
+let isProviderConfiguredHandler: typeof realRegistry.isProviderConfigured = realRegistrySnapshot.isProviderConfigured;
+let loadCatalogHandler: typeof realModelCatalog.loadCatalog = realModelCatalogSnapshot.loadCatalog;
+
 mock.module("@/config", () => ({
-    loadConfig: async () => testConfig(),
+    ...realConfigSnapshot,
+    loadConfig: (...args: Parameters<typeof realConfig.loadConfig>) => loadConfigHandler(...args),
 }));
 
 mock.module("@/utils/logger", () => ({
-    configureLogging: async () => {},
+    ...realLoggerSnapshot,
+    configureLogging: (...args: Parameters<typeof realLogger.configureLogging>) => configureLoggingHandler(...args),
 }));
 
+mock.module("@/providers/registry", () => ({
+    ...realRegistrySnapshot,
+    isProviderConfigured: (...args: Parameters<typeof realRegistry.isProviderConfigured>) =>
+        isProviderConfiguredHandler(...args),
+}));
+
+mock.module("@/providers/model-catalog", () => ({
+    ...realModelCatalogSnapshot,
+    loadCatalog: (...args: Parameters<typeof realModelCatalog.loadCatalog>) => loadCatalogHandler(...args),
+}));
+
+const resetHandlersToReal = (): void => {
+    loadConfigHandler = realConfigSnapshot.loadConfig;
+    configureLoggingHandler = realLoggerSnapshot.configureLogging;
+    isProviderConfiguredHandler = realRegistrySnapshot.isProviderConfigured;
+    loadCatalogHandler = realModelCatalogSnapshot.loadCatalog;
+};
+
+type StubCatalogResponse = {
+    schema: "models.list/1";
+    cache: ModelsListResponse["cache"];
+    providers: Record<ProviderId, ProviderListEntry>;
+};
+
 const buildResponse = (
-    providers: Record<string, ProviderListEntry>,
+    providers: Record<ProviderId, ProviderListEntry>,
     cache: ModelsListResponse["cache"] = {
         status: "fresh",
         fetched_at: "2026-01-01T00:00:00.000Z",
         expires_at: "2026-01-02T00:00:00.000Z",
     },
-): ModelsListResponse => ({
+): StubCatalogResponse => ({
     schema: "models.list/1",
     cache,
     providers,
 });
 
-const fixtureProviders = (): Record<string, ProviderListEntry> => {
+const fixtureProviders = (): Record<ProviderId, ProviderListEntry> => {
     const anthropicModel = BrokerModelInfoSchema.parse({
         route_id: "anthropic/claude-3-5-sonnet",
         provider: "anthropic",
@@ -51,37 +98,35 @@ const fixtureProviders = (): Record<string, ProviderListEntry> => {
         display_name: "GPT-4o",
     });
     return {
+        "amazon-bedrock": { status: "catalog", models: [] },
         anthropic: { status: "catalog", models: [anthropicModel] },
-        openrouter: { status: "catalog", models: [openrouterModel] },
         azure: { status: "catalog", models: [azureModel] },
         custom: { status: "passthrough", models: [] },
+        "google-vertex": { status: "catalog", models: [] },
+        openrouter: { status: "catalog", models: [openrouterModel] },
     };
 };
 
-const stubConfiguredProviders = (configured: string[]): void => {
-    mock.module("@/providers/registry", () => ({
-        isProviderConfigured: (id: string) => configured.includes(id),
-    }));
+const stubConfiguredProviders = (configured: ProviderId[]): void => {
+    isProviderConfiguredHandler = (id) => configured.includes(id);
 };
 
 const stubLoadCatalog = (
-    response: ModelsListResponse,
+    response: StubCatalogResponse,
     warning?: string,
 ): { calls: Array<{ forceRefresh: boolean }> } => {
     const calls: Array<{ forceRefresh: boolean }> = [];
-    const stubResult = {
-        ok: true as const,
+    const stubResult: realModelCatalog.LoadCatalogSuccess = {
+        ok: true,
         schema: response.schema,
         cache: response.cache,
         providers: response.providers,
         ...(warning === undefined ? {} : { warning }),
     };
-    mock.module("@/providers/model-catalog", () => ({
-        loadCatalog: async (options: { forceRefresh?: boolean }) => {
-            calls.push({ forceRefresh: options.forceRefresh === true });
-            return stubResult;
-        },
-    }));
+    loadCatalogHandler = async (options) => {
+        calls.push({ forceRefresh: options.forceRefresh === true });
+        return stubResult;
+    };
     return { calls };
 };
 
@@ -165,6 +210,17 @@ describe("parseListModelsArgs", () => {
 });
 
 describe("runListModelsCommand", () => {
+    beforeEach(() => {
+        loadConfigHandler = async () => testConfig();
+        configureLoggingHandler = async () => {};
+        isProviderConfiguredHandler = realRegistrySnapshot.isProviderConfigured;
+        loadCatalogHandler = realModelCatalogSnapshot.loadCatalog;
+    });
+
+    afterEach(() => {
+        resetHandlersToReal();
+    });
+
     it("emits a models.list/1 payload with only configured providers and cache metadata", async () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
         stubConfiguredProviders(["anthropic", "openrouter"]);
@@ -198,21 +254,19 @@ describe("runListModelsCommand", () => {
     });
 
     it("emits a models.list.error/1 payload when the catalog is unavailable in JSON mode", async () => {
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => ({
-                ok: false,
-                error: {
-                    code: "catalog_unavailable",
-                    message: "network unreachable",
-                },
-            }),
-        }));
+        loadCatalogHandler = async () => ({
+            ok: false,
+            error: {
+                code: "catalog_unavailable",
+                message: "network unreachable",
+            },
+        });
         stubConfiguredProviders([]);
 
         const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json"]));
         expect(result).toBe(1);
 
-        const payload = JSON.parse(stdout);
+        const payload = ModelsListErrorSchema.parse(JSON.parse(stdout));
         expect(payload).toEqual({
             schema: "models.list.error/1",
             error: {
@@ -220,6 +274,42 @@ describe("runListModelsCommand", () => {
                 message: "network unreachable",
             },
         });
+    });
+
+    it("includes cache.warning in models.list/1 JSON output when loadCatalog returns a warning", async () => {
+        const staleCache: ModelsListResponse["cache"] = {
+            status: "stale",
+            fetched_at: "2026-01-01T00:00:00.000Z",
+            expires_at: "2026-01-02T00:00:00.000Z",
+        };
+        stubLoadCatalog(buildResponse(fixtureProviders(), staleCache), "refresh failed: network timeout");
+        stubConfiguredProviders(["anthropic"]);
+
+        const { result, stdout, stderr } = await captureOutput(() => runListModelsCommand(["--json"]));
+        expect(result).toBe(0);
+        expect(stderr).toBe("");
+
+        const payload = ModelsListResponseSchema.parse(JSON.parse(stdout));
+        expect(payload.cache).toEqual({
+            status: "stale",
+            fetched_at: "2026-01-01T00:00:00.000Z",
+            expires_at: "2026-01-02T00:00:00.000Z",
+            warning: "refresh failed: network timeout",
+        });
+    });
+
+    it("prints the catalog warning in human mode when loadCatalog returns a warning", async () => {
+        const staleCache: ModelsListResponse["cache"] = {
+            status: "stale",
+            fetched_at: "2026-01-01T00:00:00.000Z",
+            expires_at: "2026-01-02T00:00:00.000Z",
+        };
+        stubLoadCatalog(buildResponse(fixtureProviders(), staleCache), "cache write failed: EACCES");
+        stubConfiguredProviders(["anthropic"]);
+
+        const { result, stdout } = await captureOutput(() => runListModelsCommand([]));
+        expect(result).toBe(0);
+        expect(stdout).toContain("warning: cache write failed: EACCES");
     });
 
     it("passes forceRefresh flag to loadCatalog as set by --refresh", async () => {
@@ -262,36 +352,47 @@ describe("runListModelsCommand", () => {
         expect(stderr).toContain("Unknown flag: --bogus");
     });
 
-    it("returns 1 and prints an error when loadConfig throws", async () => {
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                throw new Error("boom");
-            },
-        }));
+    it("emits a models.list.error/1 payload with config_load_failed when loadConfig throws in JSON mode", async () => {
+        loadConfigHandler = async () => {
+            throw new Error("boom");
+        };
         stubConfiguredProviders([]);
 
-        const { result, stderr } = await captureOutput(() => runListModelsCommand(["--json"]));
+        const { result, stdout, stderr } = await captureOutput(() => runListModelsCommand(["--json"]));
         expect(result).toBe(1);
+        expect(stderr).toBe("");
+
+        const payload = ModelsListErrorSchema.parse(JSON.parse(stdout));
+        expect(payload).toEqual({
+            schema: "models.list.error/1",
+            error: {
+                code: "config_load_failed",
+                message: "boom",
+            },
+        });
+    });
+
+    it("returns 1 and prints an error to stderr when loadConfig throws in human mode", async () => {
+        loadConfigHandler = async () => {
+            throw new Error("boom");
+        };
+        stubConfiguredProviders([]);
+
+        const { result, stdout, stderr } = await captureOutput(() => runListModelsCommand([]));
+        expect(result).toBe(1);
+        expect(stdout).toBe("");
         expect(stderr).toContain("Error");
         expect(stderr).toContain("boom");
     });
 
     it("returns 1 and prints a catalog error to stderr in human mode", async () => {
-        mock.module("@/config", () => ({
-            loadConfig: async () => testConfig(),
-        }));
-        mock.module("@/utils/logger", () => ({
-            configureLogging: async () => {},
-        }));
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => ({
-                ok: false,
-                error: {
-                    code: "catalog_unavailable",
-                    message: "no cache and network failed",
-                },
-            }),
-        }));
+        loadCatalogHandler = async () => ({
+            ok: false,
+            error: {
+                code: "catalog_unavailable",
+                message: "no cache and network failed",
+            },
+        });
         stubConfiguredProviders([]);
 
         const { result, stderr } = await captureOutput(() => runListModelsCommand([]));
@@ -370,18 +471,14 @@ describe("runListModelsCommand", () => {
     it("rejects a bare separator before loading configuration or the catalog", async () => {
         let configCalls = 0;
         let catalogCalls = 0;
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                configCalls += 1;
-                throw new Error("configuration should not load");
-            },
-        }));
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => {
-                catalogCalls += 1;
-                throw new Error("catalog should not load");
-            },
-        }));
+        loadConfigHandler = async () => {
+            configCalls += 1;
+            throw new Error("configuration should not load");
+        };
+        loadCatalogHandler = async () => {
+            catalogCalls += 1;
+            throw new Error("catalog should not load");
+        };
 
         const { result, stdout, stderr } = await captureOutput(() => runListModelsCommand(["--"]));
 
@@ -395,18 +492,14 @@ describe("runListModelsCommand", () => {
     it("returns parser errors before help without loading configuration or the catalog", async () => {
         let configCalls = 0;
         let catalogCalls = 0;
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                configCalls += 1;
-                throw new Error("configuration should not load");
-            },
-        }));
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => {
-                catalogCalls += 1;
-                throw new Error("catalog should not load");
-            },
-        }));
+        loadConfigHandler = async () => {
+            configCalls += 1;
+            throw new Error("configuration should not load");
+        };
+        loadCatalogHandler = async () => {
+            catalogCalls += 1;
+            throw new Error("catalog should not load");
+        };
 
         const { result, stdout, stderr } = await captureOutput(() =>
             runListModelsCommand(["--refresh=invalid", "--help"]),
@@ -422,18 +515,14 @@ describe("runListModelsCommand", () => {
     it("prints help without loading configuration or the catalog", async () => {
         let configCalls = 0;
         let catalogCalls = 0;
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                configCalls += 1;
-                throw new Error("configuration should not load");
-            },
-        }));
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => {
-                catalogCalls += 1;
-                throw new Error("catalog should not load");
-            },
-        }));
+        loadConfigHandler = async () => {
+            configCalls += 1;
+            throw new Error("configuration should not load");
+        };
+        loadCatalogHandler = async () => {
+            catalogCalls += 1;
+            throw new Error("catalog should not load");
+        };
 
         const { result, stdout, stderr } = await captureOutput(() => runListModelsCommand(["--help"]));
 

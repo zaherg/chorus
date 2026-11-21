@@ -5,7 +5,14 @@ import { getConfigPaths, loadConfig } from "@/config";
 import { makeLocalFileReader, makeLocalFileWriter } from "@/providers/cache-fs";
 import { loadCatalog } from "@/providers/model-catalog";
 import { isProviderConfigured } from "@/providers/registry";
-import type { BrokerModelInfo, ModelsListResponse, ProviderId, ProviderListEntry } from "@/types/providers";
+import {
+    type BrokerModelInfo,
+    type ModelsListError,
+    type ModelsListResponse,
+    type ProviderId,
+    type ProviderListEntry,
+    providerIdValues,
+} from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
 import { getErrorMessage } from "@/utils/helpers";
 import { configureLogging } from "@/utils/logger";
@@ -127,11 +134,17 @@ const formatCapabilityFlags = (model: BrokerModelInfo) => {
 
 const formatHuman = (response: ModelsListResponse, warning: string | undefined) => {
     const lines: string[] = [];
-    const providerIds = Object.keys(response.providers) as ProviderId[];
-    lines.push(`${providerIds.length} configured providers:`);
-    lines.push("");
-    for (const providerId of providerIds) {
+    const configuredEntries: Array<readonly [ProviderId, ProviderListEntry]> = [];
+    for (const providerId of providerIdValues) {
         const entry = response.providers[providerId];
+        if (!entry) {
+            continue;
+        }
+        configuredEntries.push([providerId, entry]);
+    }
+    lines.push(`${configuredEntries.length} configured providers:`);
+    lines.push("");
+    for (const [providerId, entry] of configuredEntries) {
         lines.push(`  ${providerId} (${entry.status})`);
         if (entry.status === "passthrough") {
             lines.push("    (no catalog; use provider-prefixed IDs)");
@@ -154,10 +167,18 @@ const formatHuman = (response: ModelsListResponse, warning: string | undefined) 
 
 const formatHumanError = (message: string) => `Error: ${message}\n`;
 
-const filterConfiguredProviders = (response: ModelsListResponse, config: Awaited<ReturnType<typeof loadConfig>>) => {
-    const filtered = Object.fromEntries(
-        Object.entries(response.providers).filter(([id]) => isProviderConfigured(id as ProviderId, config)),
-    ) as Record<ProviderId, ProviderListEntry>;
+const filterConfiguredProviders = (
+    response: ModelsListResponse,
+    config: Awaited<ReturnType<typeof loadConfig>>,
+): ModelsListResponse => {
+    const filtered: Partial<Record<ProviderId, ProviderListEntry>> = {};
+    for (const providerId of providerIdValues) {
+        const entry = response.providers[providerId];
+        if (!entry || !isProviderConfigured(providerId, config)) {
+            continue;
+        }
+        filtered[providerId] = entry;
+    }
     return {
         schema: response.schema,
         cache: response.cache,
@@ -181,20 +202,22 @@ const modelMatchesFilter = (model: BrokerModelInfo, needle: string) => {
     return false;
 };
 
-const applyModelFilter = (response: ModelsListResponse, filter: string | undefined) => {
+const applyModelFilter = (response: ModelsListResponse, filter: string | undefined): ModelsListResponse => {
     if (filter === undefined) {
         return response;
     }
     const needle = filter.toLowerCase();
-    const providers = Object.fromEntries(
-        Object.entries(response.providers).map(([id, entry]) => [
-            id,
-            {
-                ...entry,
-                models: entry.models.filter((m) => modelMatchesFilter(m, needle)),
-            },
-        ]),
-    ) as Record<ProviderId, ProviderListEntry>;
+    const providers: Partial<Record<ProviderId, ProviderListEntry>> = {};
+    for (const providerId of providerIdValues) {
+        const entry = response.providers[providerId];
+        if (!entry) {
+            continue;
+        }
+        providers[providerId] = {
+            ...entry,
+            models: entry.models.filter((m) => modelMatchesFilter(m, needle)),
+        };
+    }
     return { ...response, providers };
 };
 
@@ -216,7 +239,19 @@ export const runListModelsCommand = async (args: string[]) => {
         config = await loadConfig();
         await configureLogging(config.log_level);
     } catch (e) {
-        process.stderr.write(`Error: Failed to load config: ${getErrorMessage(e)}\n`);
+        const message = getErrorMessage(e);
+        if (json) {
+            const payload: ModelsListError = {
+                schema: "models.list.error/1",
+                error: {
+                    code: "config_load_failed",
+                    message,
+                },
+            };
+            process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+        } else {
+            process.stderr.write(`Error: Failed to load config: ${message}\n`);
+        }
         return 1;
     }
 
@@ -234,10 +269,10 @@ export const runListModelsCommand = async (args: string[]) => {
 
     if (!result.ok) {
         if (json) {
-            const payload = {
-                schema: "models.list.error/1" as const,
+            const payload: ModelsListError = {
+                schema: "models.list.error/1",
                 error: {
-                    code: "catalog_unavailable" as const,
+                    code: "catalog_unavailable",
                     message: result.error.message,
                 },
             };
@@ -248,11 +283,19 @@ export const runListModelsCommand = async (args: string[]) => {
         return 1;
     }
 
+    const cache =
+        result.warning !== undefined
+            ? {
+                  ...result.cache,
+                  warning: result.warning,
+              }
+            : result.cache;
+
     const filtered = applyModelFilter(
         filterConfiguredProviders(
             {
                 schema: result.schema,
-                cache: result.cache,
+                cache,
                 providers: result.providers,
             },
             config,
@@ -263,7 +306,7 @@ export const runListModelsCommand = async (args: string[]) => {
     if (json) {
         process.stdout.write(`${JSON.stringify(filtered, null, 2)}\n`);
     } else {
-        process.stdout.write(formatHuman(filtered, result.warning));
+        process.stdout.write(formatHuman(filtered, result.warning ?? filtered.cache.warning));
     }
     return 0;
 };

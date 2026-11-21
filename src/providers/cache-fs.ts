@@ -1,18 +1,28 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { getErrorMessage } from "@/utils/helpers";
 import type { FileReader, FileWriter } from "./model-catalog";
 
 /**
- * Resolves a cache path against a config directory. Absolute paths are
- * returned unchanged; relative paths are joined onto `configDir`.
+ * Resolves a relative cache path confined within `configDir`. Rejects absolute
+ * paths, null bytes, and any traversal that escapes `configDir`.
  */
-const resolveCachePath = (configDir: string, path: string) => {
-    if (isAbsolute(path)) {
-        return path;
+export const resolveCachePath = (configDir: string, relativePath: string): string => {
+    if (relativePath.includes("\0")) {
+        throw new Error(`Invalid cache path: ${relativePath}`);
     }
-    return resolve(configDir, path);
+    if (isAbsolute(relativePath)) {
+        throw new Error(`Cache path must be relative to configDir: ${relativePath}`);
+    }
+    const root = resolve(configDir);
+    const resolved = resolve(root, relativePath);
+    const rel = relative(root, resolved);
+    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+        throw new Error(`Cache path escapes configDir: ${relativePath}`);
+    }
+    return resolved;
 };
 
 /**
@@ -48,16 +58,29 @@ export const makeLocalFileReader = (configDir: string): FileReader => {
 export const makeLocalFileWriter = (configDir: string): FileWriter => {
     return (path, content, options) => {
         const absolute = resolveCachePath(configDir, path);
+        let tempPath: string | undefined;
         try {
-            mkdirSync(dirname(absolute), { recursive: true });
+            mkdirSync(dirname(absolute), { recursive: true, mode: 0o700 });
             const tempSuffix = options?.tempSuffix ?? ".tmp";
-            const tempPath = `${absolute}${tempSuffix}`;
+            tempPath = `${absolute}${tempSuffix}.${process.pid}.${randomBytes(6).toString("hex")}`;
             writeFileSync(tempPath, content, {
+                flag: "wx",
                 mode: options?.mode ?? 0o600,
             });
             renameSync(tempPath, absolute);
             return { ok: true };
         } catch (err) {
+            const errCode = (err as NodeJS.ErrnoException).code;
+            if (tempPath !== undefined && errCode !== "EEXIST") {
+                try {
+                    unlinkSync(tempPath);
+                } catch (unlinkErr) {
+                    const unlinkCode = (unlinkErr as NodeJS.ErrnoException).code;
+                    if (unlinkCode !== "ENOENT") {
+                        // Ignore secondary cleanup failure so the primary I/O error is returned.
+                    }
+                }
+            }
             return {
                 ok: false,
                 code: "io_error",

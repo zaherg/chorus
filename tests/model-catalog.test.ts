@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
+import { makeLocalFileReader, makeLocalFileWriter, resolveCachePath } from "@/providers/cache-fs";
 import {
     CACHE_SCHEMA,
     CATALOG_RELATIVE_PATH,
@@ -22,11 +26,17 @@ import fixture from "./fixtures/models-dev-catalog.fixture.json" with { type: "j
 
 const noopReader: FileReader = () => ({ ok: false, code: "missing" });
 
-const okJsonResponse = (body: unknown, init: { status?: number; contentType?: string | null } = {}): Response => {
+const okJsonResponse = (
+    body: unknown,
+    init: { status?: number; contentType?: string | null; etag?: string } = {},
+): Response => {
     const status = init.status ?? 200;
     const headers = new Headers();
     if (init.contentType !== null) {
         headers.set("content-type", init.contentType ?? "application/json");
+    }
+    if (init.etag !== undefined) {
+        headers.set("etag", init.etag);
     }
     return new Response(typeof body === "string" ? body : JSON.stringify(body), {
         status,
@@ -90,11 +100,12 @@ const makeWriter = (): {
     return { writer, calls };
 };
 
-const freshMetadata = (fetchedAt: string, expiresAt: string) => ({
+const freshMetadata = (fetchedAt: string, expiresAt: string, etag?: string) => ({
     schema: CACHE_SCHEMA as "models-cache/1",
     fetched_at: fetchedAt,
     expires_at: expiresAt,
     source: MODELS_DEV_CATALOG_URL,
+    ...(etag !== undefined ? { etag } : {}),
 });
 
 // === describe("model-catalog") ===
@@ -164,6 +175,57 @@ describe("model-catalog", () => {
             expect(result.ok).toBe(false);
             if (result.ok) return;
             expect(result.error.code).toBe("schema_invalid");
+        });
+
+        test("returns { ok: false, code: 'timeout' } when stream reader throws AbortError", async () => {
+            const stream = new ReadableStream<Uint8Array>({
+                pull() {
+                    const abortError = new Error("stream timed out");
+                    abortError.name = "TimeoutError";
+                    throw abortError;
+                },
+            });
+            const response = new Response(stream, {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            });
+            const { fn } = makeFetch(response);
+            const result = await fetchCatalog(fn);
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error.code).toBe("timeout");
+            expect(result.error.message).toContain("stream timed out");
+        });
+
+        test("catches response.text() failures cleanly when body stream is unavailable", async () => {
+            const makeStreamlessResponse = (err: Error) =>
+                ({
+                    ok: true,
+                    status: 200,
+                    headers: new Headers({ "content-type": "application/json" }),
+                    body: null,
+                    text: async () => {
+                        throw err;
+                    },
+                }) as unknown as Response;
+
+            const netFetch = makeFetch(makeStreamlessResponse(new Error("socket reset")));
+            const netResult = await fetchCatalog(netFetch.fn);
+            expect(netResult.ok).toBe(false);
+            if (!netResult.ok) {
+                expect(netResult.error.code).toBe("network");
+                expect(netResult.error.message).toContain("socket reset");
+            }
+
+            const abortError = new Error("text read aborted");
+            abortError.name = "AbortError";
+            const abortFetch = makeFetch(makeStreamlessResponse(abortError));
+            const abortResult = await fetchCatalog(abortFetch.fn);
+            expect(abortResult.ok).toBe(false);
+            if (!abortResult.ok) {
+                expect(abortResult.error.code).toBe("timeout");
+                expect(abortResult.error.message).toContain("text read aborted");
+            }
         });
     });
 
@@ -293,6 +355,76 @@ describe("model-catalog", () => {
             const models = normalizeProviderModels("openrouter", "openrouter", providerCatalog, canonicalModels);
             expect(models).toHaveLength(1);
             expect(models[0]?.canonical_model_id).toBeUndefined();
+        });
+
+        test("skips a single malformed model entry without wiping out sibling valid models", () => {
+            const providerCatalog = ProviderCatalogSchema.parse({
+                models: {
+                    "broken-model": { name: 12345, reasoning: "yes" },
+                    "null-entry": null,
+                    "good-model": {
+                        name: "Good Model",
+                        limit: { context: 128000, output: 4096 },
+                        reasoning: true,
+                    },
+                },
+            });
+            const models = normalizeProviderModels("openrouter", "openrouter", providerCatalog, {});
+            expect(models).toHaveLength(1);
+            expect(models[0]?.provider_model_id).toBe("good-model");
+            expect(models[0]?.display_name).toBe("Good Model");
+            expect(models[0]?.context_window).toBe(128000);
+            expect(models[0]?.output_limit).toBe(4096);
+            expect(models[0]?.supports_reasoning).toBe(true);
+        });
+
+        test("tolerates null optional fields on model entries", () => {
+            const providerCatalog = ProviderCatalogSchema.parse({
+                models: {
+                    "nullable-fields": {
+                        name: null,
+                        limit: { context: null, output: null },
+                        reasoning: null,
+                        tool_call: null,
+                        structured_output: null,
+                    },
+                    "null-limit": {
+                        name: "Null Limit",
+                        limit: null,
+                    },
+                },
+            });
+            const models = normalizeProviderModels("openrouter", "openrouter", providerCatalog, {});
+            expect(models).toHaveLength(2);
+            const first = models.find((m) => m.provider_model_id === "nullable-fields");
+            expect(first).toBeDefined();
+            expect(first?.display_name).toBe("nullable-fields");
+            expect(first?.context_window).toBeUndefined();
+            expect(first?.output_limit).toBeUndefined();
+            expect(first?.supports_reasoning).toBeUndefined();
+            expect(first?.supports_tools).toBeUndefined();
+            expect(first?.supports_structured_output).toBeUndefined();
+
+            const second = models.find((m) => m.provider_model_id === "null-limit");
+            expect(second).toBeDefined();
+            expect(second?.display_name).toBe("Null Limit");
+            expect(second?.context_window).toBeUndefined();
+        });
+
+        test("omits non-integer limit.context and limit.output without dropping the model", () => {
+            const providerCatalog = ProviderCatalogSchema.parse({
+                models: {
+                    "float-limits": {
+                        name: "Float Limits",
+                        limit: { context: 128000.5, output: 4096.25 },
+                    },
+                },
+            });
+            const models = normalizeProviderModels("openrouter", "openrouter", providerCatalog, {});
+            expect(models).toHaveLength(1);
+            expect(models[0]?.provider_model_id).toBe("float-limits");
+            expect(models[0]?.context_window).toBeUndefined();
+            expect(models[0]?.output_limit).toBeUndefined();
         });
     });
 
@@ -429,6 +561,127 @@ describe("model-catalog", () => {
             });
             expect(result.providers).not.toHaveProperty("openai");
             expect(result.providers).not.toHaveProperty("gateway");
+        });
+
+        test("returns fetched catalog with warning when cache write fails", async () => {
+            const { fn: fetchFn } = makeFetch(okJsonResponse(fixture));
+            const failingWriter: FileWriter = () => ({
+                ok: false,
+                code: "io_error",
+                message: "disk full",
+            });
+            const result = await loadCatalog({
+                configDir: "/etc/zaher-write-fail",
+                fetchFn,
+                reader: noopReader,
+                writer: failingWriter,
+                now,
+            });
+            expect(result.ok).toBe(true);
+            if (!result.ok) return;
+            expect(result.cache.status).toBe("fresh");
+            expect(result.warning).toBe("cache write failed: disk full");
+            expect(result.cache.warning).toBe("cache write failed: disk full");
+            expect(result.providers.openrouter.models.length).toBeGreaterThan(0);
+        });
+
+        test("sends If-None-Match on stale cache and refreshes TTL on 304 Not Modified", async () => {
+            const stale = freshMetadata("2025-01-01T00:00:00.000Z", "2025-06-01T00:00:00.000Z", '"etag-v1"');
+            const reader = makeReader({
+                [METADATA_RELATIVE_PATH]: JSON.stringify(stale),
+                [CATALOG_RELATIVE_PATH]: JSON.stringify(fixture),
+            });
+            const { writer, calls } = makeWriter();
+            const notModifiedResponse = new Response(null, {
+                status: 304,
+                headers: { etag: '"etag-v2"' },
+            });
+            const { fn: fetchFn, calls: fetchCalls } = makeFetch(notModifiedResponse);
+
+            const result = await loadCatalog({
+                configDir: "/etc/zaher-etag-304",
+                fetchFn,
+                reader,
+                writer,
+                now,
+            });
+
+            expect(fetchCalls).toHaveLength(1);
+            expect(fetchCalls[0]?.init.headers["If-None-Match"]).toBe('"etag-v1"');
+            expect(result.ok).toBe(true);
+            if (!result.ok) return;
+            expect(result.cache.status).toBe("fresh");
+            expect(result.cache.fetched_at).toBe("2026-06-01T00:00:00.000Z");
+            expect(result.cache.expires_at).toBe("2026-06-02T00:00:00.000Z");
+            expect(result.providers.openrouter.models.length).toBeGreaterThan(0);
+
+            expect(calls).toHaveLength(1);
+            expect(calls[0]?.path).toBe(METADATA_RELATIVE_PATH);
+            const writtenMeta = JSON.parse(calls[0]?.content ?? "{}");
+            expect(writtenMeta.etag).toBe('"etag-v2"');
+            expect(writtenMeta.fetched_at).toBe("2026-06-01T00:00:00.000Z");
+            expect(writtenMeta.expires_at).toBe("2026-06-02T00:00:00.000Z");
+        });
+
+        test("captures ETag header on 200 and omits If-None-Match when forceRefresh is true", async () => {
+            const cached = freshMetadata("2025-01-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z", '"etag-old"');
+            const reader = makeReader({
+                [METADATA_RELATIVE_PATH]: JSON.stringify(cached),
+                [CATALOG_RELATIVE_PATH]: JSON.stringify(fixture),
+            });
+            const { writer, calls } = makeWriter();
+            const { fn: fetchFn, calls: fetchCalls } = makeFetch(okJsonResponse(fixture, { etag: '"etag-new"' }));
+
+            const result = await loadCatalog({
+                configDir: "/etc/zaher-etag-200",
+                fetchFn,
+                reader,
+                writer,
+                now,
+                forceRefresh: true,
+            });
+
+            expect(fetchCalls).toHaveLength(1);
+            expect(fetchCalls[0]?.init.headers["If-None-Match"]).toBeUndefined();
+            expect(result.ok).toBe(true);
+            const metadataCall = calls.find((c) => c.path === METADATA_RELATIVE_PATH);
+            expect(metadataCall).toBeDefined();
+            const writtenMeta = JSON.parse(metadataCall?.content ?? "{}");
+            expect(writtenMeta.etag).toBe('"etag-new"');
+        });
+    });
+
+    describe("cache-fs", () => {
+        test("resolveCachePath resolves relative paths inside configDir and rejects traversal or absolute paths", () => {
+            const configDir = "/tmp/chorus-config";
+            expect(resolveCachePath(configDir, CATALOG_RELATIVE_PATH)).toBe(resolve(configDir, CATALOG_RELATIVE_PATH));
+
+            expect(() => resolveCachePath(configDir, "/etc/passwd")).toThrow(/relative/i);
+            expect(() => resolveCachePath(configDir, "../outside.json")).toThrow(/escapes/i);
+            expect(() => resolveCachePath(configDir, "models-cache/../../outside.json")).toThrow(/escapes/i);
+            expect(() => resolveCachePath(configDir, "../chorus-config-evil/catalog.json")).toThrow(/escapes/i);
+            expect(() => resolveCachePath(configDir, "..")).toThrow(/escapes/i);
+            expect(() => resolveCachePath(configDir, ".")).toThrow(/escapes/i);
+            expect(() => resolveCachePath(configDir, "models-cache/bad\0path")).toThrow(/invalid/i);
+        });
+
+        test("makeLocalFileWriter writes atomically and leaves no temp files behind", () => {
+            const tempConfigDir = mkdtempSync(join(tmpdir(), "chorus-cache-fs-"));
+            try {
+                const writer = makeLocalFileWriter(tempConfigDir);
+                const reader = makeLocalFileReader(tempConfigDir);
+
+                const writeResult = writer(CATALOG_RELATIVE_PATH, '{"ok":true}', { mode: 0o600, tempSuffix: ".tmp" });
+                expect(writeResult.ok).toBe(true);
+
+                const readResult = reader(CATALOG_RELATIVE_PATH);
+                expect(readResult).toEqual({ ok: true, text: '{"ok":true}' });
+
+                const entries = readdirSync(join(tempConfigDir, "models-cache"));
+                expect(entries).toEqual(["catalog.json"]);
+            } finally {
+                rmSync(tempConfigDir, { recursive: true, force: true });
+            }
         });
     });
 });
