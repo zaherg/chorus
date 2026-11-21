@@ -1,8 +1,14 @@
+import { z } from "zod";
+
 import type { ProviderRegistry, ThinkingMode } from "@/providers/registry";
 import type { EmbeddedFileResult } from "@/types/files";
-import type { ModelsListResponse, ProviderId } from "@/types/providers";
+import { type ModelsListResponse, type ProviderId, ProviderIdSchema } from "@/types/providers";
 
 // === Consensus primitives ===
+
+export const stanceValues = ["for", "against", "neutral"] as const;
+
+export const StanceSchema = z.enum(stanceValues);
 
 /**
  * The position a model takes toward a proposed action in a consensus round.
@@ -10,7 +16,7 @@ import type { ModelsListResponse, ProviderId } from "@/types/providers";
  * - `"against"` -- reject / disagree
  * - `"neutral"` -- abstain or present alternatives without taking a side
  */
-export type Stance = "for" | "against" | "neutral";
+export type Stance = z.infer<typeof StanceSchema>;
 
 // === Per-model config & response ===
 
@@ -42,11 +48,34 @@ export interface ConsensusModelConfig {
  * - `message` is a human-readable explanation (already secret-redacted).
  * - `retryable` is a hint for the agent; the broker does not retry itself.
  */
+export const participantErrorCodeValues = ["provider_request_failed", "synthesis_model_unresolved"] as const;
+
+export const ParticipantErrorSchema = z.object({
+    code: z.enum(participantErrorCodeValues),
+    message: z.string(),
+    retryable: z.boolean(),
+});
+
 export interface ParticipantError {
     code: "provider_request_failed" | "synthesis_model_unresolved";
     message: string;
     retryable: boolean;
 }
+
+export const SynthesisErrorSchema = ParticipantErrorSchema;
+
+export type SynthesisError = ParticipantError;
+
+export const ParticipantProviderSchema = z.union([ProviderIdSchema, z.literal("unknown")]);
+
+export const ParticipantResponseSchema = z.object({
+    route_id: z.string(),
+    provider: ParticipantProviderSchema,
+    provider_model_id: z.string(),
+    response: z.string().nullable(),
+    stance: StanceSchema.nullable(),
+    error: ParticipantErrorSchema.nullable(),
+});
 
 /**
  * A single participant record in the `cli.consensus/2` response.
@@ -59,13 +88,13 @@ export interface ParticipantError {
 export interface ParticipantResponse {
     /** Executable route ID (e.g. `"openrouter/openai/gpt-5.2"`). */
     route_id: string;
-    /** Internal provider ID (e.g. `"openrouter"`). */
-    provider: string;
+    /** Internal provider ID (e.g. `"openrouter"`), or `"unknown"` when unresolved. */
+    provider: ProviderId | "unknown";
     /** Provider-native model ID passed to the AI SDK provider. */
     provider_model_id: string;
     /** Raw text response from the model, or `null` when the call failed. */
     response: string | null;
-    /** Stance the model ultimately took, or `null` when the call failed. */
+    /** Assigned stance for the participant, or `null` when no stance was assigned or the call failed. */
     stance: Stance | null;
     /** Structured error from the participant call, or `null` on success. */
     error: ParticipantError | null;
@@ -156,3 +185,64 @@ export interface ConsensusError {
     /** Array of error message strings. Non-empty; one entry per failure. */
     errors: string[];
 }
+
+// === CLI wire output schemas ===
+
+export const EmbeddedFilesResultSchema = z.object({
+    embedded_files: z.array(z.string()),
+    embedded_text: z.string(),
+    skipped_files: z.array(z.string()),
+    total_tokens: z.number(),
+});
+
+export type EmbeddedFilesResult = EmbeddedFileResult;
+
+export const CliConsensusResponseSchema = z.object({
+    ok: z.literal(true),
+    schema: z.literal("cli.consensus/2"),
+    models: z.array(ParticipantResponseSchema),
+    synthesis: z.string().nullable(),
+    synthesis_error: SynthesisErrorSchema.nullable(),
+    embeddedFiles: EmbeddedFilesResultSchema,
+});
+
+export type CliConsensusResponse = ConsensusResult;
+
+export const cliConsensusErrorCodeValues = [
+    "ambiguous_model",
+    "unknown_model",
+    "catalog_unavailable",
+    "broker_error",
+] as const;
+
+export const CliConsensusErrorCodeSchema = z.enum(cliConsensusErrorCodeValues);
+
+export type CliConsensusErrorCode = z.infer<typeof CliConsensusErrorCodeSchema>;
+
+export const CliConsensusErrorDetailSchema = z.object({
+    code: CliConsensusErrorCodeSchema,
+    message: z.string(),
+    input: z.string().optional(),
+    candidates: z.array(z.string()).optional(),
+});
+
+export const CliConsensusErrorSchema = z.object({
+    ok: z.literal(false),
+    schema: z.literal("cli.consensus.error/1"),
+    error: CliConsensusErrorDetailSchema,
+});
+
+export interface CliConsensusError {
+    ok: false;
+    schema: "cli.consensus.error/1";
+    error: {
+        code: CliConsensusErrorCode;
+        message: string;
+        input?: string;
+        candidates?: string[];
+    };
+}
+
+export const CliConsensusOutputSchema = z.union([CliConsensusResponseSchema, CliConsensusErrorSchema]);
+
+export type CliConsensusOutput = z.infer<typeof CliConsensusOutputSchema>;

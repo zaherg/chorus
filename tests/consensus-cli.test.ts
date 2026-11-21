@@ -1,20 +1,39 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { Readable } from "node:stream";
 
 import { runCli } from "@/cli";
-import { parseConsensusArgs, runConsensusCommand } from "@/commands/consensus";
-import { BrokerModelInfoSchema, type ModelsListResponse, type ProviderListEntry } from "@/types/providers";
+import {
+    DEFAULT_STDIN_MAX_BYTES,
+    parseConsensusArgs,
+    readStdinBounded,
+    runConsensusCommand,
+} from "@/commands/consensus";
+import * as actualConfigModule from "@/config";
+import * as actualConsensusModule from "@/consensus";
+import * as actualModelCatalogModule from "@/providers/model-catalog";
+import * as actualRegistryModule from "@/providers/registry";
+import * as actualResolveRouteModule from "@/providers/resolve-route";
+import {
+    BrokerModelInfoSchema,
+    type ModelsListResponse,
+    type ProviderId,
+    type ProviderListEntry,
+} from "@/types/providers";
+import * as actualLoggerModule from "@/utils/logger";
 import { captureOutput, testConfig } from "./helpers";
 
-mock.module("@/config", () => ({
-    loadConfig: async () => testConfig(),
-}));
+const originalConfigExports = { ...actualConfigModule };
+const originalConsensusExports = { ...actualConsensusModule };
+const originalModelCatalogExports = { ...actualModelCatalogModule };
+const originalRegistryExports = { ...actualRegistryModule };
+const originalResolveRouteExports = { ...actualResolveRouteModule };
+const originalLoggerExports = { ...actualLoggerModule };
 
-mock.module("@/utils/logger", () => ({
-    configureLogging: async () => {},
-}));
+type FullModelsListResponse = Omit<ModelsListResponse, "providers"> & {
+    providers: Record<ProviderId, ProviderListEntry>;
+};
 
-const fixtureModels = (): ModelsListResponse => {
+const fixtureModels = (): FullModelsListResponse => {
     const openaiModel = BrokerModelInfoSchema.parse({
         route_id: "openrouter/openai/gpt-5.2",
         provider: "openrouter",
@@ -33,10 +52,13 @@ const fixtureModels = (): ModelsListResponse => {
         provider_model_id: "claude-sonnet-4-5",
         display_name: "Claude Sonnet 4.5",
     });
-    const providers: Record<string, ProviderListEntry> = {
+    const providers: Record<ProviderId, ProviderListEntry> = {
         openrouter: { status: "catalog", models: [openaiModel] },
         "google-vertex": { status: "catalog", models: [geminiModel] },
         anthropic: { status: "catalog", models: [anthropicModel] },
+        azure: { status: "catalog", models: [] },
+        "amazon-bedrock": { status: "catalog", models: [] },
+        custom: { status: "passthrough", models: [] },
     };
     return {
         schema: "models.list/1",
@@ -47,55 +69,6 @@ const fixtureModels = (): ModelsListResponse => {
         },
         providers,
     };
-};
-
-const stubCatalog = (response: ModelsListResponse): void => {
-    mock.module("@/providers/model-catalog", () => ({
-        loadCatalog: async () => ({
-            ok: true,
-            schema: response.schema,
-            cache: response.cache,
-            providers: response.providers,
-        }),
-    }));
-};
-
-const stubCatalogUnavailable = (message: string): void => {
-    mock.module("@/providers/model-catalog", () => ({
-        loadCatalog: async () => ({
-            ok: false,
-            error: { code: "catalog_unavailable", message },
-        }),
-    }));
-};
-
-const stubConfiguredProviders = (configured: string[]): void => {
-    mock.module("@/providers/registry", () => ({
-        isProviderConfigured: (id: string) => configured.includes(id),
-        createProviderRegistry: () => ({
-            getModelInfo: async () => undefined,
-            isProviderConfigured: (id: string) => configured.includes(id),
-            generateText: async () => ({
-                ok: true as const,
-                value: {
-                    model: "x",
-                    provider: "openrouter" as const,
-                    text: "x",
-                    usage: {
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        total_tokens: 0,
-                    },
-                },
-            }),
-        }),
-    }));
-};
-
-const stubRunConsensus = (impl: (request: unknown) => Promise<unknown>): void => {
-    mock.module("@/consensus", () => ({
-        runConsensus: impl,
-    }));
 };
 
 const defaultConsensusImpl = (): Promise<unknown> =>
@@ -122,10 +95,140 @@ const defaultConsensusImpl = (): Promise<unknown> =>
         },
     });
 
+const makeMockRegistry = (configured: string[]): ReturnType<typeof actualRegistryModule.createProviderRegistry> => ({
+    getModelInfo: async () => undefined,
+    isProviderConfigured: (id) => configured.includes(id),
+    generateText: async () => ({
+        ok: true as const,
+        value: {
+            model: "x",
+            provider: "openrouter" as const,
+            text: "x",
+            usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+            },
+        },
+    }),
+});
+
+type LoadCatalogResult = Awaited<ReturnType<typeof actualModelCatalogModule.loadCatalog>>;
+type ResolveRouteFn = typeof actualResolveRouteModule.resolveRoute;
+type ResolveRouteResult = ReturnType<ResolveRouteFn>;
+type ClassifyInputFn = typeof actualResolveRouteModule.classifyInput;
+
+let loadConfigHandler: typeof actualConfigModule.loadConfig;
+let configureLoggingHandler: typeof actualLoggerModule.configureLogging;
+let loadCatalogHandler: () => Promise<LoadCatalogResult>;
+let isProviderConfiguredHandler: (id: string) => boolean;
+let createProviderRegistryHandler: () => ReturnType<typeof actualRegistryModule.createProviderRegistry>;
+let classifyInputHandler: ClassifyInputFn;
+let resolveRouteHandler: ResolveRouteFn;
+let runConsensusHandler: (request: unknown) => Promise<unknown>;
+
+const resetMocks = (): void => {
+    loadConfigHandler = async () => testConfig();
+    configureLoggingHandler = async () => {};
+    const defaultCatalog = fixtureModels();
+    loadCatalogHandler = async () => ({
+        ok: true,
+        schema: defaultCatalog.schema,
+        cache: defaultCatalog.cache,
+        providers: defaultCatalog.providers,
+    });
+    const defaultConfigured = ["openrouter", "google-vertex", "anthropic"];
+    isProviderConfiguredHandler = (id: string) => defaultConfigured.includes(id);
+    createProviderRegistryHandler = () => makeMockRegistry(defaultConfigured);
+    classifyInputHandler = originalResolveRouteExports.classifyInput;
+    resolveRouteHandler = originalResolveRouteExports.resolveRoute;
+    runConsensusHandler = defaultConsensusImpl;
+};
+
+resetMocks();
+
+mock.module("@/config", () => ({
+    ...originalConfigExports,
+    loadConfig: (...args: Parameters<typeof actualConfigModule.loadConfig>) => loadConfigHandler(...args),
+}));
+
+mock.module("@/utils/logger", () => ({
+    ...originalLoggerExports,
+    configureLogging: (...args: Parameters<typeof actualLoggerModule.configureLogging>) =>
+        configureLoggingHandler(...args),
+}));
+
+mock.module("@/providers/model-catalog", () => ({
+    ...originalModelCatalogExports,
+    loadCatalog: () => loadCatalogHandler(),
+}));
+
+mock.module("@/providers/registry", () => ({
+    ...originalRegistryExports,
+    isProviderConfigured: (id: string) => isProviderConfiguredHandler(id),
+    createProviderRegistry: () => createProviderRegistryHandler(),
+}));
+
+mock.module("@/providers/resolve-route", () => ({
+    ...originalResolveRouteExports,
+    classifyInput: (input: string) => classifyInputHandler(input),
+    resolveRoute: (input: Parameters<ResolveRouteFn>[0], options: Parameters<ResolveRouteFn>[1]) =>
+        resolveRouteHandler(input, options),
+}));
+
+mock.module("@/consensus", () => ({
+    ...originalConsensusExports,
+    runConsensus: (request: unknown) => runConsensusHandler(request),
+}));
+
+beforeEach(() => {
+    resetMocks();
+});
+
+afterEach(() => {
+    resetMocks();
+});
+
+afterAll(() => {
+    mock.module("@/config", () => originalConfigExports);
+    mock.module("@/utils/logger", () => originalLoggerExports);
+    mock.module("@/providers/model-catalog", () => originalModelCatalogExports);
+    mock.module("@/providers/registry", () => originalRegistryExports);
+    mock.module("@/providers/resolve-route", () => originalResolveRouteExports);
+    mock.module("@/consensus", () => originalConsensusExports);
+});
+
+const stubConfig = (impl: typeof actualConfigModule.loadConfig): void => {
+    loadConfigHandler = impl;
+};
+
+const stubCatalog = (response: FullModelsListResponse): void => {
+    loadCatalogHandler = async () => ({
+        ok: true,
+        schema: response.schema,
+        cache: response.cache,
+        providers: response.providers,
+    });
+};
+
+const stubCatalogUnavailable = (message: string): void => {
+    loadCatalogHandler = async () => ({
+        ok: false,
+        error: { code: "catalog_unavailable", message },
+    });
+};
+
+const stubConfiguredProviders = (configured: string[]): void => {
+    isProviderConfiguredHandler = (id: string) => configured.includes(id);
+    createProviderRegistryHandler = () => makeMockRegistry(configured);
+};
+
+const stubRunConsensus = (impl: (request: unknown) => Promise<unknown>): void => {
+    runConsensusHandler = impl;
+};
+
 const stubDefaults = (): void => {
-    stubCatalog(fixtureModels());
-    stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
-    stubRunConsensus(defaultConsensusImpl);
+    resetMocks();
 };
 
 const stubDownstreamWorkCounters = () => {
@@ -135,36 +238,30 @@ const stubDownstreamWorkCounters = () => {
         routeWork: 0,
         consensus: 0,
     };
-    mock.module("@/config", () => ({
-        loadConfig: async () => {
-            counters.configLoad += 1;
-            return testConfig();
-        },
-    }));
-    mock.module("@/providers/model-catalog", () => ({
-        loadCatalog: async () => {
-            counters.catalogLoad += 1;
-            const response = fixtureModels();
-            return {
-                ok: true as const,
-                schema: response.schema,
-                cache: response.cache,
-                providers: response.providers,
-            };
-        },
-    }));
-    mock.module("@/providers/resolve-route", () => ({
-        classifyInput: (input: string) => {
-            counters.routeWork += 1;
-            return input.includes("/")
-                ? { kind: "exact_route_id" as const, route_id: input }
-                : { kind: "unqualified" as const, providerModelId: input };
-        },
-        resolveRoute: async () => {
-            counters.routeWork += 1;
-            throw new Error("route resolution must not run");
-        },
-    }));
+    stubConfig(async () => {
+        counters.configLoad += 1;
+        return testConfig();
+    });
+    loadCatalogHandler = async () => {
+        counters.catalogLoad += 1;
+        const response = fixtureModels();
+        return {
+            ok: true as const,
+            schema: response.schema,
+            cache: response.cache,
+            providers: response.providers,
+        };
+    };
+    classifyInputHandler = (input: string) => {
+        counters.routeWork += 1;
+        return input.includes("/")
+            ? { kind: "exact_route_id" as const, route_id: input }
+            : { kind: "unqualified" as const, providerModelId: input };
+    };
+    resolveRouteHandler = () => {
+        counters.routeWork += 1;
+        throw new Error("route resolution must not run");
+    };
     stubRunConsensus(async () => {
         counters.consensus += 1;
         return defaultConsensusImpl();
@@ -172,29 +269,20 @@ const stubDownstreamWorkCounters = () => {
     return counters;
 };
 
-const stubRouteResolver = (resolveInput: (input: string) => object) => {
+const stubRouteResolver = (resolveInput: (input: string) => ResolveRouteResult) => {
     const classificationCounts = new Map<string, number>();
     const resolutionCounts = new Map<string, number>();
-    mock.module("@/providers/resolve-route", () => ({
-        classifyInput: (input: string) => {
-            classificationCounts.set(input, (classificationCounts.get(input) ?? 0) + 1);
-            return input.includes("/")
-                ? { kind: "exact_route_id" as const, route_id: input }
-                : { kind: "unqualified" as const, providerModelId: input };
-        },
-        resolveRoute: async (input: {
-            kind: "exact_route_id" | "unqualified";
-            route_id?: string;
-            providerModelId?: string;
-        }) => {
-            const rawInput = input.kind === "exact_route_id" ? input.route_id : input.providerModelId;
-            if (rawInput === undefined) {
-                throw new Error("Expected classified route input");
-            }
-            resolutionCounts.set(rawInput, (resolutionCounts.get(rawInput) ?? 0) + 1);
-            return resolveInput(rawInput);
-        },
-    }));
+    classifyInputHandler = (input: string) => {
+        classificationCounts.set(input, (classificationCounts.get(input) ?? 0) + 1);
+        return input.includes("/")
+            ? { kind: "exact_route_id" as const, route_id: input }
+            : { kind: "unqualified" as const, providerModelId: input };
+    };
+    resolveRouteHandler = (input) => {
+        const rawInput = input.kind === "exact_route_id" ? input.route_id : input.providerModelId;
+        resolutionCounts.set(rawInput, (resolutionCounts.get(rawInput) ?? 0) + 1);
+        return resolveInput(rawInput);
+    };
     return { classificationCounts, resolutionCounts };
 };
 
@@ -285,6 +373,7 @@ describe("parseConsensusArgs", () => {
             sequential: false,
             stdinJson: false,
             schema: false,
+            help: false,
         });
     });
 
@@ -309,6 +398,7 @@ describe("parseConsensusArgs", () => {
             sequential: false,
             stdinJson: false,
             schema: false,
+            help: false,
         });
     });
 
@@ -375,6 +465,30 @@ describe("parseConsensusArgs", () => {
     it("accepts hyphen-prefixed scalar values through the equals form", () => {
         expect(parseSuccess(["--prompt=-example"]).prompt).toBe("-example");
     });
+
+    it("rejects negated value options like --no-models before minimist runs", () => {
+        for (const option of [
+            "models",
+            "prompt",
+            "files",
+            "temperature",
+            "stance",
+            "thinking-mode",
+            "temperature-model",
+            "synthesis-model",
+        ]) {
+            expect(parseErrorMessage([`--no-${option}`])).toBe(`Error: unknown option --no-${option}`);
+            expect(parseErrorMessage([`--no-${option}=value`])).toBe(`Error: unknown option --no-${option}`);
+        }
+    });
+
+    it("parses --help and -h as known boolean options and still rejects unknown options", () => {
+        expect(parseSuccess(["--models", "m1,m2", "--help"]).help).toBe(true);
+        expect(parseSuccess(["--models", "m1,m2", "-h"]).help).toBe(true);
+        expect(parseSuccess(["--no-help"]).help).toBe(false);
+        expect(parseErrorMessage(["--help=invalid"])).toBe("Error: --help must be true or false");
+        expect(parseErrorMessage(["--models", "m1,m2", "--help", "--bogus"])).toBe("Error: unknown option --bogus");
+    });
 });
 
 describe("runConsensusCommand", () => {
@@ -398,39 +512,39 @@ describe("runConsensusCommand", () => {
         }
     });
 
-    it("prints schema JSON with --schema flag", async () => {
+    it("prints real JSON Schema covering cli.consensus/2 and cli.consensus.error/1 with --schema flag", async () => {
         stubDefaults();
         const { result, stdout } = await captureOutput(() => runConsensusCommand(["--schema"]));
         expect(result).toBe(0);
-        const parsed = JSON.parse(stdout.trim());
-        expect(parsed.schema).toBe("cli.consensus/2");
-        expect(parsed.ok).toBe("boolean");
-        expect(Array.isArray(parsed.models)).toBe(true);
-        expect(parsed.synthesis).toBeDefined();
-        expect(parsed.synthesis_error).toBeDefined();
-        expect(parsed.models[0].stance).toBe("for | against | neutral | null");
-        expect(parsed.embeddedFiles).toBeDefined();
-        expect(parsed.embeddedFiles.embedded_files).toBe("string[]");
-        expect(parsed.embeddedFiles.skipped_files).toBe("string[]");
-        expect(parsed.embeddedFiles.embedded_text).toBe("string");
-        expect(parsed.embeddedFiles.total_tokens).toBe("number");
+        const parsed = JSON.parse(stdout.trim()) as {
+            $schema?: string;
+            anyOf?: Array<{
+                type?: string;
+                properties?: Record<string, { const?: unknown; type?: unknown }>;
+                required?: string[];
+            }>;
+        };
+        expect(parsed.$schema).toMatch(/json-schema\.org/);
+        expect(Array.isArray(parsed.anyOf)).toBe(true);
+        expect(parsed.anyOf).toHaveLength(2);
+
+        const successBranch = parsed.anyOf?.find((branch) => branch.properties?.schema?.const === "cli.consensus/2");
+        const errorBranch = parsed.anyOf?.find(
+            (branch) => branch.properties?.schema?.const === "cli.consensus.error/1",
+        );
+        expect(successBranch).toBeDefined();
+        expect(errorBranch).toBeDefined();
+        expect(successBranch?.properties?.ok?.const).toBe(true);
+        expect(successBranch?.properties?.models?.type).toBe("array");
+        expect(successBranch?.properties?.synthesis).toBeDefined();
+        expect(successBranch?.properties?.synthesis_error).toBeDefined();
+        expect(successBranch?.properties?.embeddedFiles).toBeDefined();
+        expect(errorBranch?.properties?.ok?.const).toBe(false);
+        expect(errorBranch?.properties?.error).toBeDefined();
     });
 
     it("prints schema before stdin conflict validation or downstream work after valid parsing", async () => {
-        let configLoadCount = 0;
-        let catalogLoadCount = 0;
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                configLoadCount += 1;
-                return testConfig();
-            },
-        }));
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => {
-                catalogLoadCount += 1;
-                return fixtureModels();
-            },
-        }));
+        const counters = stubDownstreamWorkCounters();
         const { reads, stream } = createTrackedStdin();
 
         const { result, stderr, stdout } = await mockStdin(
@@ -440,27 +554,20 @@ describe("runConsensusCommand", () => {
 
         expect(result).toBe(0);
         expect(stderr).toBe("");
-        expect(JSON.parse(stdout).schema).toBe("cli.consensus/2");
+        const parsed = JSON.parse(stdout) as {
+            $schema?: string;
+            anyOf?: Array<{ properties?: { schema?: { const?: string } } }>;
+        };
+        expect(parsed.$schema).toMatch(/json-schema\.org/);
+        expect(parsed.anyOf?.some((branch) => branch.properties?.schema?.const === "cli.consensus/2")).toBe(true);
+        expect(parsed.anyOf?.some((branch) => branch.properties?.schema?.const === "cli.consensus.error/1")).toBe(true);
         expect(reads.count).toBe(0);
-        expect(configLoadCount).toBe(0);
-        expect(catalogLoadCount).toBe(0);
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
     });
 
     it("rejects malformed --schema invocations before loading configuration or the catalog", async () => {
-        let configLoadCount = 0;
-        let catalogLoadCount = 0;
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                configLoadCount += 1;
-                return testConfig();
-            },
-        }));
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => {
-                catalogLoadCount += 1;
-                return fixtureModels();
-            },
-        }));
+        const counters = stubDownstreamWorkCounters();
 
         const cases: Array<{ args: string[]; expected: string }> = [
             { args: ["--schema", "--bogus"], expected: "unknown option" },
@@ -475,8 +582,8 @@ describe("runConsensusCommand", () => {
             expect(stdout).toBe("");
             expect(stderr).toContain(expected);
         }
-        expect(configLoadCount).toBe(0);
-        expect(catalogLoadCount).toBe(0);
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
     });
 
     it("emits ok: true and embeddedFiles on a successful consensus", async () => {
@@ -674,26 +781,7 @@ describe("runConsensusCommand", () => {
     });
 
     it("rejects malformed temperatures before loading configuration or the catalog", async () => {
-        let configLoadCount = 0;
-        let catalogLoadCount = 0;
-        const catalogResponse = fixtureModels();
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                configLoadCount += 1;
-                return testConfig();
-            },
-        }));
-        mock.module("@/providers/model-catalog", () => ({
-            loadCatalog: async () => {
-                catalogLoadCount += 1;
-                return {
-                    ok: true,
-                    schema: catalogResponse.schema,
-                    cache: catalogResponse.cache,
-                    providers: catalogResponse.providers,
-                };
-            },
-        }));
+        const counters = stubDownstreamWorkCounters();
 
         const validRequest = ["--models", "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro", "--prompt", "test"];
         const cases: Array<{ args: string[]; expected: string }> = [
@@ -716,8 +804,8 @@ describe("runConsensusCommand", () => {
             expect(result).toBe(2);
             expect(stderr).toContain(expected);
         }
-        expect(configLoadCount).toBe(0);
-        expect(catalogLoadCount).toBe(0);
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
     });
 
     it("applies all CLI per-model fields from a uniquely resolved bare selector", async () => {
@@ -1221,21 +1309,14 @@ describe("runConsensusCommand", () => {
     it("returns 3 and prints cli.consensus.error/1 for ambiguous model", async () => {
         stubCatalog(fixtureModels());
         stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
-        // Override resolve-route to return ambiguity
-        mock.module("@/providers/resolve-route", () => ({
-            classifyInput: (input: string) =>
-                input.includes("/")
-                    ? { kind: "exact_route_id" as const, route_id: input }
-                    : { kind: "unqualified" as const, providerModelId: input },
-            resolveRoute: async () => ({
-                ok: false as const,
-                error: {
-                    code: "ambiguous_model" as const,
-                    input: "shared",
-                    candidates: ["anthropic/shared", "azure/shared"],
-                    message: "Model 'shared' is exposed by multiple configured providers.",
-                },
-            }),
+        stubRouteResolver(() => ({
+            ok: false as const,
+            error: {
+                code: "ambiguous_model" as const,
+                input: "shared",
+                candidates: ["anthropic/shared", "azure/shared"],
+                message: "Model 'shared' is exposed by multiple configured providers.",
+            },
         }));
         stubRunConsensus(defaultConsensusImpl);
 
@@ -1257,19 +1338,13 @@ describe("runConsensusCommand", () => {
     it("returns 3 and prints cli.consensus.error/1 for unknown model", async () => {
         stubCatalog(fixtureModels());
         stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
-        mock.module("@/providers/resolve-route", () => ({
-            classifyInput: (input: string) =>
-                input.includes("/")
-                    ? { kind: "exact_route_id" as const, route_id: input }
-                    : { kind: "unqualified" as const, providerModelId: input },
-            resolveRoute: async () => ({
-                ok: false as const,
-                error: {
-                    code: "model_not_found" as const,
-                    input: "missing",
-                    message: "No configured provider exposes model 'missing'.",
-                },
-            }),
+        stubRouteResolver(() => ({
+            ok: false as const,
+            error: {
+                code: "model_not_found" as const,
+                input: "missing",
+                message: "No configured provider exposes model 'missing'.",
+            },
         }));
         stubRunConsensus(defaultConsensusImpl);
 
@@ -1288,35 +1363,27 @@ describe("runConsensusCommand", () => {
     it("returns 0 with synthesis=null when synthesis-model cannot be resolved", async () => {
         stubCatalog(fixtureModels());
         stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
-        // Allow real resolution for participant models but fail for synthesis
-        mock.module("@/providers/resolve-route", () => ({
-            classifyInput: (input: string) =>
-                input.includes("/")
-                    ? { kind: "exact_route_id" as const, route_id: input }
-                    : { kind: "unqualified" as const, providerModelId: input },
-            resolveRoute: async (input: { kind: string; route_id?: string; providerModelId?: string }) => {
-                const id = input.kind === "exact_route_id" ? input.route_id : input.providerModelId;
-                if (id === "synth-missing") {
-                    return {
-                        ok: false as const,
-                        error: {
-                            code: "model_not_found" as const,
-                            input: "synth-missing",
-                            message: "synth model not found",
-                        },
-                    };
-                }
+        stubRouteResolver((id) => {
+            if (id === "synth-missing") {
                 return {
-                    ok: true as const,
-                    value: {
-                        route_id: id ?? "openrouter/openai/gpt-5.2",
-                        provider: "openrouter" as const,
-                        provider_model_id: "gpt-5.2",
-                        display_name: "GPT-5.2",
+                    ok: false as const,
+                    error: {
+                        code: "model_not_found" as const,
+                        input: "synth-missing",
+                        message: "synth model not found",
                     },
                 };
-            },
-        }));
+            }
+            return {
+                ok: true as const,
+                value: {
+                    route_id: id,
+                    provider: "openrouter" as const,
+                    provider_model_id: "gpt-5.2",
+                    display_name: "GPT-5.2",
+                },
+            };
+        });
         let passedSynthesis: unknown = "sentinel";
         stubRunConsensus(async (req: unknown) => {
             const r = req as { synthesisModel?: string };
@@ -1573,14 +1640,9 @@ describe("runConsensusCommand", () => {
     });
 
     it("returns 1 when config loading fails and prints to stderr", async () => {
-        mock.module("@/config", () => ({
-            loadConfig: async () => {
-                throw new Error("boom");
-            },
-        }));
-        mock.module("@/utils/logger", () => ({
-            configureLogging: async () => {},
-        }));
+        stubConfig(async () => {
+            throw new Error("boom");
+        });
         stubCatalog(fixtureModels());
         stubConfiguredProviders(["openrouter"]);
         stubRunConsensus(defaultConsensusImpl);
@@ -1721,6 +1783,356 @@ describe("runConsensusCommand", () => {
         expect(counters.consensus).toBe(0);
         expect(Object.getOwnPropertyDescriptor(process, "stdin")).toEqual(originalDescriptor);
         expect(stream.destroyed).toBe(true);
+    });
+
+    it("rejects negated value options with exit code 2", async () => {
+        const counters = stubDownstreamWorkCounters();
+        const { result, stdout, stderr } = await captureOutput(() => runConsensusCommand(["--no-models"]));
+
+        expect(result).toBe(2);
+        expect(stdout).toBe("");
+        expect(stderr).toBe("Error: unknown option --no-models\n");
+        expect(counters.configLoad).toBe(0);
+    });
+
+    it("rejects whitespace-only CLI --prompt with exit code 2 while preserving intentional indentation", async () => {
+        const counters = stubDownstreamWorkCounters();
+        const whitespace = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                "--prompt",
+                "   \t\n  ",
+            ]),
+        );
+        expect(whitespace.result).toBe(2);
+        expect(whitespace.stdout).toBe("");
+        expect(whitespace.stderr).toContain("--prompt must be non-empty");
+        expect(counters.configLoad).toBe(0);
+
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+        const indented = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                "--prompt",
+                "  keep leading spaces",
+            ]),
+        );
+        expect(indented.result).toBe(0);
+        expect(receivedRequest).toMatchObject({
+            findings: "  keep leading spaces",
+            step: "  keep leading spaces",
+        });
+    });
+
+    it("enforces strict StdinConsensusSchema validation and trims models, files, and synthesis_model", async () => {
+        const rejectedCases = [
+            {
+                name: "unknown key synthesisModel",
+                payload: {
+                    models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+                    prompt: "hello",
+                    synthesisModel: "anthropic/claude-sonnet-4-5",
+                },
+            },
+            {
+                name: "unknown key thinkingMode",
+                payload: {
+                    models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+                    prompt: "hello",
+                    thinkingMode: "high",
+                },
+            },
+            {
+                name: "whitespace-only prompt",
+                payload: {
+                    models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+                    prompt: "   \n\t ",
+                },
+            },
+            {
+                name: "empty synthesis_model",
+                payload: {
+                    models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+                    prompt: "hello",
+                    synthesis_model: "   ",
+                },
+            },
+            {
+                name: "blank model entry",
+                payload: {
+                    models: ["openrouter/openai/gpt-5.2", "   "],
+                    prompt: "hello",
+                },
+            },
+            {
+                name: "blank file entry",
+                payload: {
+                    models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+                    prompt: "hello",
+                    files: ["   "],
+                },
+            },
+        ];
+
+        for (const testCase of rejectedCases) {
+            stubDefaults();
+            const { result, stdout, stderr } = await mockStdin(
+                () => runConsensusCommand(["--stdin-json"]),
+                JSON.stringify(testCase.payload),
+            );
+            expect(result).toBe(2);
+            expect(stdout).toBe("");
+            expect(stderr).toContain("Error: Invalid --stdin-json input:");
+        }
+
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+        const validPayload = JSON.stringify({
+            models: ["  openrouter/openai/gpt-5.2  ", "  gemini-2.5-pro  "],
+            prompt: "  indented prompt",
+            files: ["  src/a.ts  "],
+            synthesis_model: "  anthropic/claude-sonnet-4-5  ",
+        });
+        const { result, stderr } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), validPayload);
+        expect(result).toBe(0);
+        expect(stderr).toContain("Warning: --files embeds local file contents");
+        expect(receivedRequest).toMatchObject({
+            findings: "  indented prompt",
+            step: "  indented prompt",
+            relevantFiles: ["src/a.ts"],
+            synthesisModel: "anthropic/claude-sonnet-4-5",
+            models: [{ model_id: "openrouter/openai/gpt-5.2" }, { model_id: "google-vertex/gemini-2.5-pro" }],
+        });
+    });
+
+    it("returns exit code 1 for oversized --stdin-json input before downstream work", async () => {
+        const counters = stubDownstreamWorkCounters();
+        const chunk = Buffer.alloc(1024 * 1024, "a");
+        const chunkCount = Math.ceil(DEFAULT_STDIN_MAX_BYTES / chunk.byteLength) + 1;
+        const stream = Readable.from(
+            (function* () {
+                for (let i = 0; i < chunkCount; i += 1) {
+                    yield chunk;
+                }
+            })(),
+        );
+
+        const { result, stdout, stderr } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), stream);
+
+        expect(result).toBe(1);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Error: stdin exceeds maximum size");
+        expect(counters.configLoad).toBe(0);
+        expect(counters.catalogLoad).toBe(0);
+        expect(counters.routeWork).toBe(0);
+        expect(counters.consensus).toBe(0);
+        expect(stream.destroyed).toBe(true);
+    });
+
+    it("rejects hung stdin streams with a timeout error in readStdinBounded", async () => {
+        const hungStream = new Readable({
+            read() {},
+        });
+
+        await expect(readStdinBounded(hungStream, { timeoutMs: 25 })).rejects.toThrow("timed out reading stdin");
+        expect(hungStream.destroyed).toBe(true);
+    });
+
+    it("rejects duplicate canonical participants for identical IDs, alias collisions, and 3-model lists", async () => {
+        const cases = [
+            {
+                models: "openrouter/openai/gpt-5.2,openrouter/openai/gpt-5.2",
+                duplicate: "openrouter/openai/gpt-5.2",
+            },
+            {
+                models: "claude-sonnet-4-5,anthropic/claude-sonnet-4-5",
+                duplicate: "anthropic/claude-sonnet-4-5",
+            },
+            {
+                models: "gemini-2.5-pro,google-vertex/gemini-2.5-pro",
+                duplicate: "google-vertex/gemini-2.5-pro",
+            },
+            {
+                models: "openrouter/openai/gpt-5.2,openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                duplicate: "openrouter/openai/gpt-5.2",
+            },
+        ];
+
+        for (const testCase of cases) {
+            stubDefaults();
+            let consensusCalls = 0;
+            stubRunConsensus(async () => {
+                consensusCalls += 1;
+                return defaultConsensusImpl();
+            });
+
+            const { result, stdout, stderr } = await captureOutput(() =>
+                runConsensusCommand(["--models", testCase.models, "--prompt", "test"]),
+            );
+
+            expect(result).toBe(2);
+            expect(stdout).toBe("");
+            expect(stderr).toContain("duplicate participant");
+            expect(stderr).toContain(testCase.duplicate);
+            expect(consensusCalls).toBe(0);
+        }
+    });
+
+    it("exits 130 on SIGINT and 143 on SIGTERM without writing partial stdout JSON", async () => {
+        const signalCases: Array<{ signal: "SIGINT" | "SIGTERM"; expectedCode: number; shouldThrow: boolean }> = [
+            { signal: "SIGINT", expectedCode: 130, shouldThrow: false },
+            { signal: "SIGTERM", expectedCode: 143, shouldThrow: false },
+            { signal: "SIGINT", expectedCode: 130, shouldThrow: true },
+            { signal: "SIGTERM", expectedCode: 143, shouldThrow: true },
+        ];
+
+        for (const { signal, expectedCode, shouldThrow } of signalCases) {
+            stubDefaults();
+            let aborted = false;
+            stubRunConsensus(
+                (request: unknown) =>
+                    new Promise((resolve, reject) => {
+                        const { abortSignal } = request as { abortSignal: AbortSignal };
+                        abortSignal.addEventListener("abort", () => {
+                            aborted = true;
+                            if (shouldThrow) {
+                                reject(new Error("aborted"));
+                            } else {
+                                resolve(defaultConsensusImpl());
+                            }
+                        });
+                        queueMicrotask(() => {
+                            process.emit(signal, signal);
+                        });
+                    }),
+            );
+
+            const { result, stdout } = await captureOutput(() =>
+                runConsensusCommand([
+                    "--models",
+                    "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                    "--prompt",
+                    "test",
+                ]),
+            );
+
+            expect(aborted).toBe(true);
+            expect(result).toBe(expectedCode);
+            expect(stdout).toBe("");
+        }
+    });
+
+    it("aborts runConsensus when cli_timeout_ms expires", async () => {
+        stubConfig(async () => ({
+            ...testConfig(),
+            cli_timeout_ms: 25,
+        }));
+        let sawAbort = false;
+        stubRunConsensus(
+            (request: unknown) =>
+                new Promise((resolve) => {
+                    const { abortSignal } = request as { abortSignal: AbortSignal };
+                    abortSignal.addEventListener("abort", () => {
+                        sawAbort = true;
+                        resolve(defaultConsensusImpl());
+                    });
+                }),
+        );
+
+        const { result } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                "--prompt",
+                "test",
+            ]),
+        );
+
+        expect(sawAbort).toBe(true);
+        expect(result).toBe(0);
+    });
+
+    it("emits a stderr warning when --thinking-mode is assigned to providers that ignore it", async () => {
+        const baseCatalog = fixtureModels();
+        const azureModel = BrokerModelInfoSchema.parse({
+            route_id: "azure/gpt-4o",
+            provider: "azure",
+            provider_model_id: "gpt-4o",
+            display_name: "GPT-4o",
+        });
+        const bedrockModel = BrokerModelInfoSchema.parse({
+            route_id: "amazon-bedrock/claude-3-7",
+            provider: "amazon-bedrock",
+            provider_model_id: "claude-3-7",
+            display_name: "Claude 3.7",
+        });
+        const fullCatalog: FullModelsListResponse = {
+            ...baseCatalog,
+            providers: {
+                ...baseCatalog.providers,
+                azure: { status: "catalog", models: [azureModel] },
+                "amazon-bedrock": { status: "catalog", models: [bedrockModel] },
+            },
+        };
+
+        const unsupportedTargets = [
+            { routeId: "azure/gpt-4o", provider: "azure" },
+            { routeId: "google-vertex/gemini-2.5-pro", provider: "google-vertex" },
+            { routeId: "amazon-bedrock/claude-3-7", provider: "amazon-bedrock" },
+            { routeId: "custom/local-llm", provider: "custom" },
+        ];
+
+        for (const { routeId, provider } of unsupportedTargets) {
+            stubCatalog(fullCatalog);
+            stubConfiguredProviders(["openrouter", "google-vertex", "anthropic", "azure", "amazon-bedrock", "custom"]);
+            stubRunConsensus(defaultConsensusImpl);
+
+            const { result, stderr } = await captureOutput(() =>
+                runConsensusCommand([
+                    "--models",
+                    `${routeId},openrouter/openai/gpt-5.2`,
+                    "--prompt",
+                    "test",
+                    "--thinking-mode",
+                    `${routeId}=high`,
+                ]),
+            );
+
+            expect(result).toBe(0);
+            expect(stderr).toContain("--thinking-mode is ignored");
+            expect(stderr).toContain(provider);
+            expect(stderr).toContain(routeId);
+        }
+
+        // No warning for anthropic and openrouter.
+        stubCatalog(fullCatalog);
+        stubConfiguredProviders(["openrouter", "anthropic"]);
+        stubRunConsensus(defaultConsensusImpl);
+        const supported = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "anthropic/claude-sonnet-4-5,openrouter/openai/gpt-5.2",
+                "--prompt",
+                "test",
+                "--thinking-mode",
+                "anthropic/claude-sonnet-4-5=high",
+                "--thinking-mode",
+                "openrouter/openai/gpt-5.2=medium",
+            ]),
+        );
+        expect(supported.result).toBe(0);
+        expect(supported.stderr).toBe("");
     });
 });
 

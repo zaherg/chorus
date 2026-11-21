@@ -10,11 +10,19 @@ export const runCli = async (args: string[]) => {
     }
 
     if (args[0] === "--version" || args[0] === "-v") {
+        if (args.length > 1) {
+            process.stderr.write(`Error: ${args[0]} does not accept additional arguments (unexpected: ${args[1]})\n`);
+            return 2;
+        }
         process.stdout.write(`consensus ${VERSION}\n`);
         return 0;
     }
 
     if (args[0] === "--help" || args[0] === "-h" || args[0] === "help") {
+        if (args.length > 1) {
+            process.stderr.write(`Error: ${args[0]} does not accept additional arguments (unexpected: ${args[1]})\n`);
+            return 2;
+        }
         printHelp();
         return 0;
     }
@@ -31,7 +39,7 @@ export const runCli = async (args: string[]) => {
     return 1;
 };
 
-const printHelp = () => {
+export const printHelp = () => {
     const help = `consensus ${VERSION} - multi-model consensus CLI
 
 USAGE:
@@ -98,7 +106,9 @@ LIST-MODELS USAGE:
     --refresh      Force a fresh fetch from models.dev before listing
 
 CONFIG:
-  Config file lives at "~/.config/chorus/config.json". It make itself if not there. You look at it, you change it for you. Also put secret stuff in env.
+  Configuration is read from "~/.config/chorus/config.json" (created automatically with defaults on first run).
+  Edit this file to configure providers, defaults, and timeouts.
+  Keep API keys and secrets in environment variables and reference them with "$ENV_VAR" syntax in the config file.
 
 EXIT CODES:
   0  Success
@@ -106,6 +116,8 @@ EXIT CODES:
   2  Argument or request-validation error, including completed invalid stdin input
      (malformed JSON or schema-invalid content)
   3  Model resolution error
+  130  Interrupted by SIGINT
+  143  Terminated by SIGTERM
 `;
     process.stdout.write(help);
 };

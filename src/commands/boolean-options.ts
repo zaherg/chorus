@@ -36,3 +36,33 @@ export const validateKnownBooleanTokens = (
 
     return { ok: true, separatorPresent: false };
 };
+
+/**
+ * Finds the first negated long-form token (`--no-<option>`) that targets a
+ * declared value-bearing option before `--`, so callers can reject it before
+ * minimist silently coerces it to `false`.
+ */
+export const findNegatedValueOption = (
+    rawArgs: readonly string[],
+    valueOptionNames: readonly string[],
+): string | undefined => {
+    const valueOptions = new Set(valueOptionNames);
+
+    for (const token of rawArgs) {
+        if (token === "--") {
+            return undefined;
+        }
+        if (!token.startsWith("--no-")) {
+            continue;
+        }
+
+        const optionAndValue = token.slice(5);
+        const equalsIndex = optionAndValue.indexOf("=");
+        const optionName = equalsIndex === -1 ? optionAndValue : optionAndValue.slice(0, equalsIndex);
+        if (valueOptions.has(optionName)) {
+            return `--no-${optionName}`;
+        }
+    }
+
+    return undefined;
+};

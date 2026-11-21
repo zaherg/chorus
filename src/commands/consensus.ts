@@ -1,60 +1,121 @@
 import minimist from "minimist";
 import { z } from "zod/v4";
 
-import { getConfigPaths, loadConfig } from "@/config";
+import { printHelp } from "@/cli";
+import { getConfigPaths, loadConfig, MAX_TIMEOUT_MS } from "@/config";
 import { runConsensus } from "@/consensus";
 import { makeLocalFileReader, makeLocalFileWriter } from "@/providers/cache-fs";
 import { loadCatalog } from "@/providers/model-catalog";
-import { createProviderRegistry, isProviderConfigured } from "@/providers/registry";
+import {
+    createProviderRegistry,
+    isProviderConfigured,
+    type ThinkingMode,
+    ThinkingModeSchema,
+    thinkingModeValues,
+} from "@/providers/registry";
 import { classifyInput, type ResolveRouteOptions, resolveRoute } from "@/providers/resolve-route";
-import type { ParticipantError, Stance } from "@/types/consensus";
+import {
+    CliConsensusOutputSchema,
+    type ParticipantError,
+    type Stance,
+    StanceSchema,
+    stanceValues,
+} from "@/types/consensus";
 import { type BrokerModelInfo, providerIdValues } from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
 import { getErrorMessage } from "@/utils/helpers";
 import { configureLogging } from "@/utils/logger";
-import { validateKnownBooleanTokens } from "./boolean-options";
+import { findNegatedValueOption, validateKnownBooleanTokens } from "./boolean-options";
 
-const THINKING_MODE_VALUES = ["minimal", "low", "medium", "high", "max"] as const;
-type ThinkingMode = (typeof THINKING_MODE_VALUES)[number];
+export const DEFAULT_STDIN_MAX_BYTES = 10 * 1024 * 1024;
+export const DEFAULT_STDIN_TIMEOUT_MS = 30_000;
 
-const SCHEMA_JSON = {
-    schema: "cli.consensus/2",
-    ok: "boolean",
-    models: [
-        {
-            route_id: "string (e.g. openrouter/openai/gpt-5.2)",
-            provider: "string (e.g. openrouter)",
-            provider_model_id: "string",
-            response: "string | null",
-            stance: "for | against | neutral | null",
-            error: "{ code: 'provider_request_failed', message: string, retryable: boolean } | null",
-        },
-    ],
-    synthesis: "string | null",
-    synthesis_error:
-        "{ code: 'provider_request_failed' | 'synthesis_model_unresolved', message: string, retryable: boolean } | null",
-    embeddedFiles: {
-        embedded_files: "string[]",
-        embedded_text: "string",
-        skipped_files: "string[]",
-        total_tokens: "number",
-    },
+export interface ReadStdinOptions {
+    maxBytes?: number;
+    timeoutMs?: number;
+}
+
+export type ReadableStdin = AsyncIterable<Buffer | Uint8Array | string> & {
+    destroy?: (error?: Error) => unknown;
 };
 
-const StdinConsensusSchema = z.object({
-    models: z.array(z.string().min(1)).min(1),
-    prompt: z.string().min(1),
-    findings: z.string().optional(),
-    step: z.string().optional(),
-    stances: z.record(z.string(), z.enum(["for", "against", "neutral"])).optional(),
-    thinking_modes: z.record(z.string(), z.enum(THINKING_MODE_VALUES)).optional(),
-    temperatures: z.record(z.string(), z.number().min(0).max(1)).optional(),
-    temperature: z.number().min(0).max(1).optional(),
-    files: z.array(z.string()).optional(),
-    synthesis_model: z.string().optional(),
-});
+/** Reads UTF-8 text from stdin with bounded total byte size and an inactivity/overall timeout. */
+export const readStdinBounded = async (stream: ReadableStdin, options: ReadStdinOptions = {}): Promise<string> => {
+    const maxBytes = options.maxBytes ?? DEFAULT_STDIN_MAX_BYTES;
+    const timeoutMs = options.timeoutMs ?? DEFAULT_STDIN_TIMEOUT_MS;
 
-const CONSENSUS_BOOLEAN_OPTIONS = ["sequential", "stdin-json", "schema"] as const;
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+            timedOut = true;
+            const err = new Error("timed out reading stdin");
+            reject(err);
+            stream.destroy?.();
+        }, timeoutMs);
+        if (typeof timer.unref === "function") {
+            timer.unref();
+        }
+    });
+    timeoutPromise.catch(() => {});
+
+    const readPromise = (async (): Promise<string> => {
+        const chunks: Buffer[] = [];
+        let totalBytes = 0;
+
+        for await (const chunk of stream) {
+            const buf = Buffer.isBuffer(chunk)
+                ? chunk
+                : typeof chunk === "string"
+                  ? Buffer.from(chunk, "utf8")
+                  : Buffer.from(chunk);
+            totalBytes += buf.byteLength;
+            if (totalBytes > maxBytes) {
+                stream.destroy?.();
+                throw new Error(`stdin exceeds maximum size (${maxBytes} bytes)`);
+            }
+            chunks.push(buf);
+        }
+
+        if (timedOut) {
+            throw new Error("timed out reading stdin");
+        }
+
+        return Buffer.concat(chunks).toString("utf8");
+    })();
+    readPromise.catch(() => {});
+
+    try {
+        return await Promise.race([readPromise, timeoutPromise]);
+    } catch (error) {
+        if (timedOut) {
+            throw new Error("timed out reading stdin");
+        }
+        throw error;
+    } finally {
+        if (timer !== undefined) {
+            clearTimeout(timer);
+        }
+    }
+};
+
+const StdinConsensusSchema = z
+    .object({
+        models: z.array(z.string().trim().min(1)).min(1),
+        prompt: z.string().refine((s) => s.trim().length > 0, "prompt must be non-empty"),
+        findings: z.string().optional(),
+        step: z.string().optional(),
+        stances: z.record(z.string(), StanceSchema).optional(),
+        thinking_modes: z.record(z.string(), ThinkingModeSchema).optional(),
+        temperatures: z.record(z.string(), z.number().min(0).max(1)).optional(),
+        temperature: z.number().min(0).max(1).optional(),
+        files: z.array(z.string().trim().min(1)).optional(),
+        synthesis_model: z.string().trim().min(1).optional(),
+    })
+    .strict();
+
+const CONSENSUS_BOOLEAN_OPTIONS = ["sequential", "stdin-json", "schema", "help", "h"] as const;
 
 const CONSENSUS_OPERATIONAL_VALUE_OPTIONS = [
     "models",
@@ -95,6 +156,8 @@ const ConsensusMinimistSchema = z
         sequential: z.boolean(),
         "stdin-json": z.boolean(),
         schema: z.boolean(),
+        help: z.boolean(),
+        h: z.boolean(),
     })
     .strict();
 
@@ -112,6 +175,7 @@ export type ParsedConsensusArgs = {
     sequential: boolean;
     stdinJson: boolean;
     schema: boolean;
+    help: boolean;
 };
 
 const consensusArgumentError = (message: string, details?: unknown): { ok: false; error: ToolError } => ({
@@ -166,10 +230,16 @@ export const parseConsensusArgs = (args: string[]): Result<ParsedConsensusArgs, 
         return consensusArgumentError(message, { token: booleanSyntax.token });
     }
 
+    const negatedValueOption = findNegatedValueOption(args, CONSENSUS_OPERATIONAL_VALUE_OPTIONS);
+    if (negatedValueOption !== undefined) {
+        return consensusArgumentError(`Error: unknown option ${negatedValueOption}`);
+    }
+
     const unknownOptions: string[] = [];
     const raw: unknown = minimist(args, {
         string: ["_", ...CONSENSUS_OPERATIONAL_VALUE_OPTIONS],
         boolean: [...CONSENSUS_BOOLEAN_OPTIONS],
+        alias: { help: "h" },
         "--": true,
         unknown: (token: string) => {
             if (token.startsWith("-")) {
@@ -230,6 +300,7 @@ export const parseConsensusArgs = (args: string[]): Result<ParsedConsensusArgs, 
             sequential: parsed.sequential,
             stdinJson: parsed["stdin-json"],
             schema: parsed.schema,
+            help: parsed.help,
         },
     };
 };
@@ -292,12 +363,12 @@ const brokerError = (code: string, message: string, extra?: object) => {
     });
 };
 
-const resolveOne = async (
+const resolveOne = (
     input: string,
     options: ResolveRouteOptions,
-): Promise<{ ok: true; value: BrokerModelInfo } | { ok: false; handled: boolean }> => {
+): { ok: true; value: BrokerModelInfo } | { ok: false; handled: boolean } => {
     const classified = classifyInput(input);
-    const result = await resolveRoute(classified, options);
+    const result = resolveRoute(classified, options);
     if (result.ok) {
         return { ok: true, value: result.value };
     }
@@ -323,6 +394,7 @@ export const runConsensusCommand = async (args: string[]) => {
 
     const {
         files: filesStr,
+        help,
         models: modelsStr,
         prompt,
         schema,
@@ -335,8 +407,13 @@ export const runConsensusCommand = async (args: string[]) => {
         thinkingMode: thinkingModeFlags,
     } = parsed.value;
 
+    if (help) {
+        printHelp();
+        return 0;
+    }
+
     if (schema) {
-        process.stdout.write(`${JSON.stringify(SCHEMA_JSON, null, 2)}\n`);
+        process.stdout.write(`${JSON.stringify(z.toJSONSchema(CliConsensusOutputSchema), null, 2)}\n`);
         return 0;
     }
 
@@ -362,33 +439,34 @@ export const runConsensusCommand = async (args: string[]) => {
     if (stdinJson) {
         let stdinText: string;
         try {
-            const chunks: Buffer[] = [];
-            for await (const chunk of process.stdin) {
-                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-            }
-            stdinText = Buffer.concat(chunks).toString("utf8");
+            stdinText = await readStdinBounded(process.stdin);
         } catch (e) {
-            process.stderr.write(`Error: Failed to read --stdin-json input: ${getErrorMessage(e)}\n`);
+            const message = getErrorMessage(e);
+            if (message.startsWith("stdin exceeds maximum size") || message.startsWith("timed out reading stdin")) {
+                process.stderr.write(`Error: ${message}\n`);
+            } else {
+                process.stderr.write(`Error: Failed to read --stdin-json input: ${message}\n`);
+            }
             return 1;
         }
 
-        let parsed: z.infer<typeof StdinConsensusSchema>;
+        let parsedStdin: z.infer<typeof StdinConsensusSchema>;
         try {
-            parsed = StdinConsensusSchema.parse(JSON.parse(stdinText));
+            parsedStdin = StdinConsensusSchema.parse(JSON.parse(stdinText));
         } catch (e) {
             process.stderr.write(`Error: Invalid --stdin-json input: ${getErrorMessage(e)}\n`);
             return 2;
         }
-        modelInputs = parsed.models;
-        promptText = parsed.prompt;
-        findings = parsed.findings ?? promptText;
-        step = parsed.step ?? promptText;
-        if (parsed.stances) modelStances = parsed.stances;
-        if (parsed.thinking_modes) modelThinkingModes = parsed.thinking_modes;
-        if (parsed.temperatures) modelTemperatures = parsed.temperatures;
-        globalTemperature = parsed.temperature;
-        relevantFiles = parsed.files ?? [];
-        synthesisModel = parsed.synthesis_model;
+        modelInputs = parsedStdin.models;
+        promptText = parsedStdin.prompt;
+        findings = parsedStdin.findings ?? promptText;
+        step = parsedStdin.step ?? promptText;
+        if (parsedStdin.stances) modelStances = parsedStdin.stances;
+        if (parsedStdin.thinking_modes) modelThinkingModes = parsedStdin.thinking_modes;
+        if (parsedStdin.temperatures) modelTemperatures = parsedStdin.temperatures;
+        globalTemperature = parsedStdin.temperature;
+        relevantFiles = parsedStdin.files ?? [];
+        synthesisModel = parsedStdin.synthesis_model;
     } else {
         if (!modelsStr) {
             process.stderr.write("Error: --models is required (comma-separated route_ids or provider-native IDs)\n");
@@ -399,8 +477,12 @@ export const runConsensusCommand = async (args: string[]) => {
             .map((s) => s.trim())
             .filter(Boolean);
 
-        if (!prompt) {
+        if (prompt === undefined) {
             process.stderr.write("Error: --prompt is required (or use --stdin-json)\n");
+            return 2;
+        }
+        if (prompt.trim().length === 0) {
+            process.stderr.write("Error: --prompt must be non-empty\n");
             return 2;
         }
         promptText = prompt;
@@ -426,9 +508,11 @@ export const runConsensusCommand = async (args: string[]) => {
         const parsedStances = parseModelKeyValueFlags(
             "stance",
             stanceFlags,
-            (value): Stance | undefined =>
-                ["for", "against", "neutral"].includes(value) ? (value as Stance) : undefined,
-            "model=for|against|neutral",
+            (value): Stance | undefined => {
+                const validated = StanceSchema.safeParse(value);
+                return validated.success ? validated.data : undefined;
+            },
+            `model=${stanceValues.join("|")}`,
         );
         if (!parsedStances.ok) {
             process.stderr.write(`${parsedStances.error.message}\n`);
@@ -439,9 +523,11 @@ export const runConsensusCommand = async (args: string[]) => {
         const parsedThinkingModes = parseModelKeyValueFlags(
             "thinking-mode",
             thinkingModeFlags,
-            (value): ThinkingMode | undefined =>
-                THINKING_MODE_VALUES.includes(value as ThinkingMode) ? (value as ThinkingMode) : undefined,
-            "model=minimal|low|medium|high|max",
+            (value): ThinkingMode | undefined => {
+                const validated = ThinkingModeSchema.safeParse(value);
+                return validated.success ? validated.data : undefined;
+            },
+            `model=${thinkingModeValues.join("|")}`,
         );
         if (!parsedThinkingModes.ok) {
             process.stderr.write(`${parsedThinkingModes.error.message}\n`);
@@ -498,14 +584,29 @@ export const runConsensusCommand = async (args: string[]) => {
 
     const resolved: BrokerModelInfo[] = [];
     for (const input of modelInputs) {
-        const r = await resolveOne(input, routeOptions);
+        const r = resolveOne(input, routeOptions);
         if (!r.ok) {
             return 3;
         }
         resolved.push(r.value);
     }
 
-    const selectedRouteIds = new Set(resolved.map((info) => info.route_id));
+    const selectedRouteIds = new Set<string>();
+    const duplicateRouteIds: string[] = [];
+    for (const info of resolved) {
+        if (selectedRouteIds.has(info.route_id)) {
+            if (!duplicateRouteIds.includes(info.route_id)) {
+                duplicateRouteIds.push(info.route_id);
+            }
+        } else {
+            selectedRouteIds.add(info.route_id);
+        }
+    }
+    if (selectedRouteIds.size !== resolved.length) {
+        process.stderr.write(`Error: duplicate participant model(s): ${duplicateRouteIds.join(", ")}\n`);
+        return 2;
+    }
+
     const activeSelectors = new Set([
         ...Object.keys(modelStances),
         ...Object.keys(modelThinkingModes),
@@ -513,7 +614,7 @@ export const runConsensusCommand = async (args: string[]) => {
     ]);
     const selectorRoutes = new Map<string, string>();
     for (const selector of activeSelectors) {
-        const resolution = await resolveOne(selector, routeOptions);
+        const resolution = resolveOne(selector, routeOptions);
         if (!resolution.ok) {
             return 3;
         }
@@ -543,6 +644,18 @@ export const runConsensusCommand = async (args: string[]) => {
     }
     modelThinkingModes = normalizedThinkingModes.value;
 
+    for (const info of resolved) {
+        if (
+            modelThinkingModes[info.route_id] !== undefined &&
+            info.provider !== "anthropic" &&
+            info.provider !== "openrouter"
+        ) {
+            process.stderr.write(
+                `Warning: --thinking-mode is ignored for provider '${info.provider}' (${info.route_id}); only 'anthropic' and 'openrouter' support thinking modes.\n`,
+            );
+        }
+    }
+
     const normalizedTemperatures = normalizeModelOptionMap("temperature", modelTemperatures, selectorRoutes);
     if (!normalizedTemperatures.ok) {
         process.stderr.write(`${normalizedTemperatures.error.message}\n`);
@@ -554,7 +667,7 @@ export const runConsensusCommand = async (args: string[]) => {
     let unresolvedSynthesisError: ParticipantError | null = null;
     if (synthesisModel) {
         const classifiedSynth = classifyInput(synthesisModel);
-        const synthResult = await resolveRoute(classifiedSynth, routeOptions);
+        const synthResult = resolveRoute(classifiedSynth, routeOptions);
         if (synthResult.ok) {
             resolvedSynthesisRouteId = synthResult.value.route_id;
         } else {
@@ -588,12 +701,19 @@ export const runConsensusCommand = async (args: string[]) => {
 
     let result: Awaited<ReturnType<typeof runConsensus>>;
     const abortController = new AbortController();
-    const onSignal = () => {
+    let receivedSignal: "SIGINT" | "SIGTERM" | null = null;
+    const onSigint = () => {
+        receivedSignal ??= "SIGINT";
         abortController.abort();
     };
-    process.on("SIGINT", onSignal);
-    process.on("SIGTERM", onSignal);
-    const cliTimeout = setTimeout(() => abortController.abort(), config.cli_timeout_ms);
+    const onSigterm = () => {
+        receivedSignal ??= "SIGTERM";
+        abortController.abort();
+    };
+    process.on("SIGINT", onSigint);
+    process.on("SIGTERM", onSigterm);
+    const cliTimeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(1, Math.trunc(config.cli_timeout_ms)));
+    const cliTimeout = setTimeout(() => abortController.abort(), cliTimeoutMs);
     try {
         result = await runConsensus({
             providerRegistry: createProviderRegistry(config),
@@ -611,12 +731,19 @@ export const runConsensusCommand = async (args: string[]) => {
             modelContextWindow,
         });
     } catch (e) {
+        if (receivedSignal !== null) {
+            return receivedSignal === "SIGINT" ? 130 : 143;
+        }
         brokerError("broker_error", getErrorMessage(e));
         return 1;
     } finally {
         clearTimeout(cliTimeout);
-        process.off("SIGINT", onSignal);
-        process.off("SIGTERM", onSignal);
+        process.off("SIGINT", onSigint);
+        process.off("SIGTERM", onSigterm);
+    }
+
+    if (receivedSignal !== null) {
+        return receivedSignal === "SIGINT" ? 130 : 143;
     }
 
     if (!result.ok) {

@@ -31,7 +31,7 @@ const queryModel = async ({
     priorResponses?: ParticipantResponse[];
 }): Promise<ParticipantResponse> => {
     const modelId = modelConfig.model_id;
-    const stance = modelConfig.stance ?? "neutral";
+    const stance = modelConfig.stance;
     const modelInfo = await request.providerRegistry.getModelInfo(modelId, {
         catalog: request.catalog,
         configuredProviders: request.configuredProviders,
@@ -68,7 +68,7 @@ const queryModel = async ({
 
     if (!result.ok) {
         return {
-            route_id: modelId,
+            route_id: modelInfo.route_id,
             provider: modelInfo.provider,
             provider_model_id: modelInfo.provider_model_id,
             response: null,
@@ -82,11 +82,11 @@ const queryModel = async ({
     }
 
     return {
-        route_id: modelId,
+        route_id: modelInfo.route_id,
         provider: result.value.provider,
         provider_model_id: modelInfo.provider_model_id,
         response: result.value.text,
-        stance,
+        stance: stance ?? null,
         error: null,
     };
 };
@@ -109,7 +109,11 @@ const runSettledWithConcurrency = async <T, R>(
     maxConcurrency: number,
     worker: (item: T, index: number) => Promise<R>,
 ) => {
-    const limit = Math.max(1, Math.min(items.length, maxConcurrency ?? 1));
+    if (items.length === 0) {
+        return [];
+    }
+    const safeConcurrency = Number.isFinite(maxConcurrency) ? Math.max(1, Math.trunc(maxConcurrency)) : 1;
+    const limit = Math.min(items.length, safeConcurrency);
     const results = new Array<PromiseSettledResult<R>>(items.length);
     let nextIndex = 0;
 
@@ -132,42 +136,44 @@ const runSettledWithConcurrency = async <T, R>(
     return results;
 };
 
-const failedParticipant = (modelId: string, reason: unknown): ParticipantResponse => {
+const isRetryableError = (reason: unknown): boolean => {
     // Inspect the error to decide retryability.
     // Abort/timeout errors are retryable (transient).
     // Structured errors with an explicit retryable field are honoured.
     // Everything else defaults to retryable since most runtime
     // exceptions (network, rate-limit) are also transient.
-    let retryable = true;
     if (reason === "Aborted") {
-        retryable = false;
-    } else if (reason instanceof Error) {
+        return false;
+    }
+    if (reason instanceof Error) {
         const name = reason.name;
         if (name === "AbortError" || name === "TimeoutError") {
-            retryable = true;
-        } else if ("retryable" in reason && typeof (reason as Record<string, unknown>).retryable === "boolean") {
-            retryable = (reason as Record<string, unknown>).retryable as boolean;
+            return true;
+        }
+        if ("retryable" in reason && typeof (reason as Record<string, unknown>).retryable === "boolean") {
+            return (reason as Record<string, unknown>).retryable as boolean;
         }
     } else if (reason !== null && typeof reason === "object" && "retryable" in reason) {
         const val = (reason as Record<string, unknown>).retryable;
         if (typeof val === "boolean") {
-            retryable = val;
+            return val;
         }
     }
-
-    return {
-        route_id: modelId,
-        provider: "unknown",
-        provider_model_id: modelId,
-        response: null,
-        stance: null,
-        error: {
-            code: "provider_request_failed",
-            message: getErrorMessage(reason),
-            retryable,
-        },
-    };
+    return true;
 };
+
+const failedParticipant = (modelId: string, reason: unknown): ParticipantResponse => ({
+    route_id: modelId,
+    provider: "unknown",
+    provider_model_id: modelId,
+    response: null,
+    stance: null,
+    error: {
+        code: "provider_request_failed",
+        message: getErrorMessage(reason),
+        retryable: isRetryableError(reason),
+    },
+});
 
 /**
  * Runs consensus across configured models and optionally synthesizes the combined result.
@@ -229,7 +235,8 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
                 continue;
             }
 
-            const priorResponses = participantResponses.length > 0 ? participantResponses : undefined;
+            const successfulPrior = participantResponses.filter((r) => r.response !== null);
+            const priorResponses = successfulPrior.length > 0 ? successfulPrior : undefined;
             try {
                 const response = await queryModel({
                     modelConfig,
@@ -237,13 +244,21 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
                     fileText: embeddedFiles.embedded_text,
                     priorResponses,
                 });
-                if (response.error) {
-                    logger?.warn(`Model ${modelConfig.model_id} failed: ${response.error.message}`);
-                }
                 participantResponses.push(response);
             } catch (e) {
                 participantResponses.push(failedParticipant(modelConfig.model_id, e));
             }
+        }
+    }
+
+    for (const participant of participantResponses) {
+        if (participant.error) {
+            logger?.warn("Consensus participant failed", {
+                route_id: participant.route_id,
+                code: participant.error.code,
+                message: participant.error.message,
+                retryable: participant.error.retryable,
+            });
         }
     }
 
@@ -266,44 +281,68 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
 
     if (request.synthesisModel) {
         const synthesisRouteId = request.synthesisModel;
-        const synthesisInfo = await request.providerRegistry.getModelInfo(synthesisRouteId, {
-            catalog: request.catalog,
-            configuredProviders: request.configuredProviders,
-        });
-        if (!synthesisInfo) {
+        if (request.abortSignal?.aborted) {
             synthesisError = {
                 code: "provider_request_failed",
-                message: `Unknown synthesis model: ${synthesisRouteId}`,
+                message: "Consensus request aborted before synthesis",
                 retryable: false,
             };
         } else {
-            const successfulResponses = participantResponses.filter((r) => r.response !== null);
-            const synthesisPrompt = buildSynthesisPrompt({
-                step: request.step,
-                findings: request.findings,
-                successfulResponses,
-                fileText: embeddedFiles.embedded_text,
-            });
-            const synthesisResult = await request.providerRegistry.generateText(
-                synthesisInfo.route_id,
-                synthesisPrompt,
-                CONSENSUS_SYSTEM_PROMPT,
-                {
-                    abortSignal: request.abortSignal,
+            try {
+                const synthesisInfo = await request.providerRegistry.getModelInfo(synthesisRouteId, {
                     catalog: request.catalog,
                     configuredProviders: request.configuredProviders,
-                    temperature: request.temperature,
-                },
-            );
-            if (!synthesisResult.ok) {
+                });
+                if (!synthesisInfo) {
+                    synthesisError = {
+                        code: "synthesis_model_unresolved",
+                        message: `Unknown synthesis model: ${synthesisRouteId}`,
+                        retryable: false,
+                    };
+                } else {
+                    const successfulResponses = participantResponses.filter((r) => r.response !== null);
+                    const synthesisPrompt = buildSynthesisPrompt({
+                        step: request.step,
+                        findings: request.findings,
+                        successfulResponses,
+                        fileText: embeddedFiles.embedded_text,
+                    });
+                    const synthesisResult = await request.providerRegistry.generateText(
+                        synthesisInfo.route_id,
+                        synthesisPrompt,
+                        CONSENSUS_SYSTEM_PROMPT,
+                        {
+                            abortSignal: request.abortSignal,
+                            catalog: request.catalog,
+                            configuredProviders: request.configuredProviders,
+                            temperature: request.temperature,
+                        },
+                    );
+                    if (!synthesisResult.ok) {
+                        synthesisError = {
+                            code: "provider_request_failed",
+                            message: synthesisResult.error.message,
+                            retryable: synthesisResult.error.retryable ?? true,
+                        };
+                    } else {
+                        synthesis = synthesisResult.value.text;
+                    }
+                }
+            } catch (e) {
                 synthesisError = {
                     code: "provider_request_failed",
-                    message: synthesisResult.error.message,
-                    retryable: synthesisResult.error.retryable ?? true,
+                    message: getErrorMessage(e),
+                    retryable: isRetryableError(e),
                 };
-            } else {
-                synthesis = synthesisResult.value.text;
             }
+        }
+        if (synthesisError) {
+            logger?.warn("Consensus synthesis failed", {
+                route_id: synthesisRouteId,
+                code: synthesisError.code,
+                message: synthesisError.message,
+                retryable: synthesisError.retryable,
+            });
         }
     }
 
