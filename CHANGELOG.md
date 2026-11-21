@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.3.0] - 2026-11-21
+
+### Added
+
+- Document the full release process.
+
+### Changed
+
+- Update consensus and delegate skills, add skill tests, and sync documentation.
+- Update release smoke test for JSON Schema --schema output.
+
+### Fixed
+
+- Fix npm prepack packaging, installer hardening, and macOS CI.
+- Fix stance default, sequential filtering, signal exits, prompt boundaries, and CLI validation.
+
+### Other
+
+- Drop coding-agent home directories from the embed allowlist.
+- Pin @biomejs/biome instead of resolving it through bunx.
+- Pin actions to commit SHAs and verify the actionlint download.
+- Harden custom URL IP pinning, file embedding, and secret-safe logging.
+- Harden config validation, provider setup, Anthropic thinking budgets, and error handling.
+- Isolate bad catalog entries, add ETag refresh, harden cache fs, and narrow provider list schema.
+- Bump version to 0.3.0.
+
+### Removed
+
+- Remove unused @logtape/file dependency.
+
 ## [0.2.0] - 2026-11-21
 
 ### Added
