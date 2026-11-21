@@ -2,7 +2,7 @@
     "name": "@zaherg/chorus",
     "version": "0.0.7",
     "type": "module",
-    "packageManager": "bun@1.3.14",
+    "packageManager": "bun@1.4.5",
     "bin": {
         "consensus": "dist/cli.js"
     },
