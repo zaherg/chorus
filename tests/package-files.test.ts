@@ -14,12 +14,18 @@ describe("package files", () => {
 
             const packedPackage = JSON.parse(await Bun.$`tar -xOf ${archivePath} package/package.json`.text()) as {
                 bin: unknown;
+                scripts?: { prepack?: unknown };
             };
 
-            expect(entries).toContain("package/dist/cli.js");
+            expect(packedPackage.scripts?.prepack).toBe("bun run build");
             expect(packedPackage.bin).toEqual({ consensus: "dist/cli.js" });
+            expect(entries).toContain("package/dist/cli.js");
+            expect(entries).toContain("package/skills/consensus/SKILL.md");
             expect(entries).toContain("package/skills/consensus/scripts/install.sh");
+            expect(entries).toContain("package/skills/delegate/SKILL.md");
             expect(entries.some((entry) => entry.includes("/bin/"))).toBe(false);
+            expect(entries.some((entry) => entry.startsWith("package/dist/consensus-"))).toBe(false);
+            expect(entries.some((entry) => entry.startsWith("package/skills/system/"))).toBe(false);
         } finally {
             await rm(destination, { recursive: true, force: true });
         }

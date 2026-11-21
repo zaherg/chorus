@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,7 +14,7 @@ afterEach(async () => {
 
 const tempDir = async (name: string): Promise<string> => {
     const dir = await Bun.$`mktemp -d ${join(tmpdir(), `${name}.XXXXXX`)}`.text();
-    const trimmed = dir.trim();
+    const trimmed = await realpath(dir.trim());
     tempDirs.push(trimmed);
     return trimmed;
 };
@@ -48,7 +48,7 @@ const createTooling = async ({
     platform?: string;
     arch?: string;
     binaryName?: string;
-    checksum?: "valid" | "invalid";
+    checksum?: "valid" | "invalid" | "duplicate" | "malformed";
     latestUrl?: string;
     latestFails?: boolean;
 } = {}): Promise<{ binDir: string; logPath: string }> => {
@@ -56,8 +56,14 @@ const createTooling = async ({
     const logPath = join(binDir, "calls.log");
     const binaryBody = "released binary\n";
     const digest = new Bun.CryptoHasher("sha256").update(binaryBody).digest("hex");
-    const checksumValue =
-        checksum === "valid" ? digest : "0000000000000000000000000000000000000000000000000000000000000000";
+    const checksumLines =
+        checksum === "valid"
+            ? `${digest}  ${binaryName}\n`
+            : checksum === "duplicate"
+              ? `${digest}  ${binaryName}\n${digest}  ${binaryName}\n`
+              : checksum === "malformed"
+                ? `not-a-sha256  ${binaryName}\n`
+                : `0000000000000000000000000000000000000000000000000000000000000000  ${binaryName}\n`;
 
     await writeExecutable(
         join(binDir, "uname"),
@@ -80,7 +86,7 @@ out=""
 url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -o | -w)
+    -o | -w | --proto | --connect-timeout | --max-time)
       [ "$1" = -o ] && out="$2"
       shift 2
       ;;
@@ -99,7 +105,7 @@ case "$url" in
     ${latestFails ? "exit 22" : `printf '%s' '${latestUrl}'`}
     ;;
   */checksums.sha256)
-    printf '%s  %s\\n' '${checksumValue}' '${binaryName}' > "$out"
+    printf '%s' '${checksumLines}' > "$out"
     ;;
   */${binaryName})
     printf '%s' '${binaryBody}' > "$out"
@@ -161,10 +167,13 @@ describe("skill-local installer", () => {
             "curl https://github.com/zaherg/chorus/releases/download/v9.9.9/consensus-darwin-arm64\n",
         );
         expect(log).toContain("curl https://github.com/zaherg/chorus/releases/download/v9.9.9/checksums.sha256\n");
+        const escapedInstalledPath = installedPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const xattrCalls = log.split("\n").filter((line) => line.startsWith("xattr "));
         expect(xattrCalls).toEqual([
             expect.stringMatching(/xattr -d com\.apple\.quarantine .+\/consensus-darwin-arm64$/),
-            `xattr -d com.apple.quarantine ${installedPath}.tmp`,
+            expect.stringMatching(
+                new RegExp(`^xattr -d com\\.apple\\.quarantine ${escapedInstalledPath}\\.tmp\\.[^/]+$`),
+            ),
             `xattr -d com.apple.quarantine ${installedPath}`,
         ]);
     });
@@ -235,13 +244,32 @@ describe("skill-local installer", () => {
 
     it("aborts on checksum mismatch without installing the executable", async () => {
         const skillDir = await createCopiedSkill();
-        const { binDir } = await createTooling({ checksum: "invalid" });
+        const { binDir, logPath } = await createTooling({ checksum: "invalid" });
 
         const result = await runInstaller(skillDir, binDir);
 
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr).toContain("checksum");
         await expect(stat(join(skillDir, "bin", "consensus"))).rejects.toThrow();
+        const log = await readFile(logPath, "utf8");
+        const xattrCalls = log.split("\n").filter((line) => line.startsWith("xattr "));
+        expect(xattrCalls).toEqual([]);
+    });
+
+    it("aborts when checksums.sha256 has duplicate or malformed entries for the artifact", async () => {
+        for (const mode of ["duplicate", "malformed"] as const) {
+            const skillDir = await createCopiedSkill();
+            const { binDir, logPath } = await createTooling({ checksum: mode });
+
+            const result = await runInstaller(skillDir, binDir);
+
+            expect(result.exitCode).not.toBe(0);
+            expect(result.stderr).toContain("checksum");
+            await expect(stat(join(skillDir, "bin", "consensus"))).rejects.toThrow();
+            const log = await readFile(logPath, "utf8");
+            const xattrCalls = log.split("\n").filter((line) => line.startsWith("xattr "));
+            expect(xattrCalls).toEqual([]);
+        }
     });
 
     it("supports --prefix and --no-verify without downloading checksums", async () => {

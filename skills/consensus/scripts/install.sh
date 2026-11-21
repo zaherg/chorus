@@ -87,7 +87,7 @@ if [ -n "$CLI_VERSION" ]; then
 else
     # GitHub redirects /releases/latest to the newest published, non-pre-release tag.
     # Resolve it once so the binary and checksums come from the same release.
-    if ! latest_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${REPO_URL}/releases/latest")"; then
+    if ! latest_url="$(curl --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 -fsSLI -o /dev/null -w '%{url_effective}' "${REPO_URL}/releases/latest")"; then
         echo "Error: could not look up the latest release at ${REPO_URL}/releases/latest" >&2
         exit 1
     fi
@@ -98,10 +98,14 @@ fi
 
 ARTIFACT="consensus-${PLATFORM}-${ARCH}"
 BASE_URL="${REPO_URL}/releases/download/${CLI_VERSION}"
-TMPDIR="$(mktemp -d)"
+work_dir="$(mktemp -d)"
+STAGED_TMP=""
 
 cleanup() {
-    rm -rf "$TMPDIR"
+    rm -rf "$work_dir"
+    if [ -n "${STAGED_TMP:-}" ]; then
+        rm -f "$STAGED_TMP"
+    fi
 }
 trap cleanup EXIT
 
@@ -115,7 +119,7 @@ DEST="${DEST_DIR}/consensus"
 download() {
     url="$1"
     out="$2"
-    curl -fsSL "$url" -o "$out"
+    curl --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 -fsSL "$url" -o "$out"
 }
 
 strip_quarantine() {
@@ -128,20 +132,26 @@ strip_quarantine() {
 verify_checksum() {
     checksum_file="$1"
     artifact_path="$2"
-    expected_file="${TMPDIR}/expected.sha256"
+    expected_file="${work_dir}/expected.sha256"
 
-    if ! grep -E "  ${ARTIFACT}$" "$checksum_file" >"$expected_file"; then
+    if ! grep -E "^[0-9a-fA-F]{64}  ${ARTIFACT}$" "$checksum_file" >"$expected_file"; then
         echo "Error: checksum entry for ${ARTIFACT} not found in checksums.sha256" >&2
         exit 1
     fi
 
+    match_count="$(wc -l <"$expected_file" | tr -d '[:space:]')"
+    if [ "$match_count" -ne 1 ]; then
+        echo "Error: expected exactly 1 checksum entry for ${ARTIFACT}, found ${match_count}" >&2
+        exit 1
+    fi
+
     if command -v shasum >/dev/null 2>&1; then
-        if ! (cd "$TMPDIR" && shasum -a 256 -c "$expected_file") >/dev/null; then
+        if ! (cd "$work_dir" && shasum -a 256 -c "$expected_file") >/dev/null; then
             echo "Error: checksum verification failed for ${ARTIFACT}" >&2
             exit 1
         fi
     elif command -v sha256sum >/dev/null 2>&1; then
-        if ! (cd "$TMPDIR" && sha256sum -c "$expected_file") >/dev/null; then
+        if ! (cd "$work_dir" && sha256sum -c "$expected_file") >/dev/null; then
             echo "Error: checksum verification failed for ${ARTIFACT}" >&2
             exit 1
         fi
@@ -156,12 +166,11 @@ verify_checksum() {
     fi
 }
 
-ARTIFACT_PATH="${TMPDIR}/${ARTIFACT}"
-CHECKSUM_PATH="${TMPDIR}/checksums.sha256"
+ARTIFACT_PATH="${work_dir}/${ARTIFACT}"
+CHECKSUM_PATH="${work_dir}/checksums.sha256"
 
 echo "Downloading ${ARTIFACT} from ${CLI_VERSION}..."
 download "${BASE_URL}/${ARTIFACT}" "$ARTIFACT_PATH"
-strip_quarantine "$ARTIFACT_PATH"
 
 if [ "$VERIFY" -eq 1 ]; then
     echo "Verifying checksum..."
@@ -171,10 +180,14 @@ else
     echo "Skipping checksum verification (--no-verify)."
 fi
 
+strip_quarantine "$ARTIFACT_PATH"
+
 mkdir -p "$DEST_DIR"
-install -m 0755 "$ARTIFACT_PATH" "${DEST}.tmp"
-strip_quarantine "${DEST}.tmp"
-mv "${DEST}.tmp" "$DEST"
+STAGED_TMP="$(mktemp "${DEST}.tmp.XXXXXX")"
+install -m 0755 "$ARTIFACT_PATH" "$STAGED_TMP"
+strip_quarantine "$STAGED_TMP"
+mv -f "$STAGED_TMP" "$DEST"
+STAGED_TMP=""
 strip_quarantine "$DEST"
 
 echo "Installed ${DEST}"
