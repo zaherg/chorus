@@ -2,6 +2,9 @@ name: Lint GitHub Actions workflows
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -9,21 +12,26 @@ concurrency:
 jobs:
   actionlint:
     runs-on: ubuntu-latest
+    env:
+      # Bump both together. The digest comes from the release checksums file.
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Cache actionlint
-        id: cache-actionlint
-        uses: actions/cache@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          path: ./actionlint
-          key: actionlint-${{ runner.os }}
+          persist-credentials: false
 
       - name: Download actionlint
-        if: steps.cache-actionlint.outputs.cache-hit != 'true'
-        run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
         shell: bash
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
 
       - name: Check workflow files
-        run: ./actionlint -color -pyflakes=
         shell: bash
+        run: '"$RUNNER_TEMP/actionlint" -color -pyflakes='

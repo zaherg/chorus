@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Check out tagged commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Match tag, package version, and installer CLI_VERSION
         id: version
@@ -96,11 +96,11 @@ jobs:
 
     steps:
       - name: Check out tagged commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # Uses the Bun version from package.json packageManager.
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -132,7 +132,7 @@ jobs:
           echo "$ASSET: $actual"
 
       - name: Upload binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.asset }}
           path: ${{ runner.temp }}/release/${{ matrix.asset }}
@@ -147,7 +147,7 @@ jobs:
 
     steps:
       - name: Download tested binaries
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: release
           pattern: consensus-*
@@ -176,7 +176,7 @@ jobs:
 
       # Creates or reuses a draft; publishing stays manual. Immutable releases lock published assets.
       - name: Create draft release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ github.ref_name }}
           draft: true
