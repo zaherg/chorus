@@ -225,6 +225,8 @@ Supported provider settings:
 | Google Vertex AI | `google_vertex_api_key` |
 | Custom OpenAI-compatible endpoint | `custom_url` and `custom_api_key` |
 
+If your config contains `baseten_api_key`, see [Migrating from Baseten](./docs/providers.md#migrating-from-baseten).
+
 `custom_url` and `custom_api_key` must be set together.
 Chorus validates the configured custom URL and performs a hostname and DNS safety check before each custom request.
 The `allow_insecure_custom` setting only relaxes the transport scheme check for otherwise allowed targets.
@@ -303,6 +305,7 @@ The CLI reads its version from `package.json` at build time.
 | Provider timeouts | Increase `provider_timeout_ms` in config |
 | "No API key configured" | Add the required key to `~/.config/chorus/config.json` |
 | Binary not found | Run `scripts/install.sh` from the skill directory |
+| `consensus --version` fails with `Cannot require module @basetenlabs/performance-client-...` | The `v0.0.7` and `v0.1.0` ARM64 binaries load Baseten's native embeddings client before reading config; [build from current source](#from-source) instead. |
 
 ## License
 

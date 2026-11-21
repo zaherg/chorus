@@ -28,6 +28,26 @@ These providers are configured but have no models.dev catalog key. The agent may
 
 For passthrough providers, `consensus list-models --json` reports `status: "passthrough"` and an empty `models` array. Use provider-prefixed IDs such as `custom/example-model`. Replace example-model with the provider-native model ID you intend to call.
 
+## Migrating from Baseten
+
+Current source builds omit `@ai-sdk/baseten`: they ignore `baseten_api_key` and do not accept `baseten/<model-id>` routes.
+To try Baseten’s OpenAI-compatible Model APIs, set `BASETEN_API_KEY` in the environment that runs Chorus and replace the old key entry in `~/.config/chorus/config.json` with these fields:
+
+```json
+{
+  "custom_url": "https://inference.baseten.co/v1",
+  "custom_api_key": "$BASETEN_API_KEY"
+}
+```
+
+Chorus has one custom endpoint: changing `custom_url` sends **all** `custom/` requests to that URL.
+Change `baseten/` to `custom/` wherever you use the route, including `--models`, `--synthesis-model`, and saved JSON requests; keep the rest of the model ID unchanged.
+Before updating saved requests, replace `<model-id>` with a model available to your Baseten account and test one prompt:
+
+```bash
+consensus --models 'custom/<model-id>' --prompt 'Reply with OK.'
+```
+
 ## Catalog Fetch and Cache
 
 The broker fetches `https://models.dev/catalog.json` and writes two files under the user config dir:

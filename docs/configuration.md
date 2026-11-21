@@ -51,6 +51,8 @@ Each provider has a corresponding config key:
 
 ### Custom Provider
 
+To replace a legacy `baseten_api_key`, see [Migrating from Baseten](./providers.md#migrating-from-baseten).
+
 `custom_url` must be set alongside `custom_api_key`. The CLI enforces HTTPS for non-loopback URLs. Local HTTP is allowed for `localhost`, `127.0.0.1`, and `::1`. URL credentials and fragments are rejected. Direct private/link-local hosts are rejected (this is not a full SSRF defense).
 
 To allow insecure custom URLs on any host:
