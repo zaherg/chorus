@@ -675,7 +675,7 @@ Workflow file: `.github/workflows/release.yml`
 | `@openrouter/ai-sdk-provider` | `^3.1.0` | OpenRouter provider |
 | `minimist` | `^1.2.8` | CLI flag parsing |
 | `zod` | `^4.6.7` | Schema validation |
-| `@logtape/logtape` + `@logtape/file` | `^2.4.2` | Structured logging + rotating file sink |
+| `@logtape/logtape` | `^2.4.2` | Structured logging (paired with custom 0600 rotating file sink) |
 | `@biomejs/biome` (dev) | `2.6.8` | Linter and formatter |
 | `@types/bun` + `@types/node` + `@types/minimist` (dev) | `^1.4.5` / `26.1.1` / `^1.2.5` | TypeScript type definitions |
 | `typescript` (dev) | `^7.0.2` | TypeScript compiler |

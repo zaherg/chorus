@@ -10,7 +10,6 @@
         "@ai-sdk/azure": "^4.0.130",
         "@ai-sdk/google-vertex": "^5.0.143",
         "@ai-sdk/openai-compatible": "^3.0.94",
-        "@logtape/file": "^2.4.2",
         "@logtape/logtape": "^2.4.2",
         "@openrouter/ai-sdk-provider": "^3.1.0",
         "ai": "^7.0.178",
@@ -70,8 +69,6 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.6.8", "", { "os": "win32", "cpu": "arm64" }, "sha512-ezjCEZzHIWE2pdh83a7zLVcAAcDaERcTcvfA7uWlxqz/1CuDxgtfO19pDg9B6YY4wKYIDvYBw2QCMnqIshSwmw=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.6.8", "", { "os": "win32", "cpu": "x64" }, "sha512-cD6HvGczZUiAYsY8s2TxxXj2AHFzEdMomvVJfEjzOjBM45nGqIDfBpbtvwGQzDCN8X2yKKk9u1jnDZisT2nxIg=="],
-
-    "@logtape/file": ["@logtape/file@2.4.2", "", { "peerDependencies": { "@logtape/logtape": "^2.4.2" } }, "sha512-Wit1GrwBQ1mCERREsBX5C4TKe3SWoAZ2bFBh7e4sbAnh1w2rOjD46puW+/f/A3G7HFIsAYlL03/r1/9CeKZ0XQ=="],
 
     "@logtape/logtape": ["@logtape/logtape@2.4.2", "", {}, "sha512-YJyC1gEMgWmTqJTRtKkjgasEbi8/0gP7Dj8n6bL46gQIAhpTY8uXJ+1QYMOgF5asotlGMvy3G7ejXUe45Yd1MQ=="],
 

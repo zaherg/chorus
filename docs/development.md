@@ -194,7 +194,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 | `@ai-sdk/azure` | `^4.0.130` | Azure provider |
 | `@ai-sdk/google-vertex` | `^5.0.143` | Google Vertex AI provider |
 | `@ai-sdk/openai-compatible` | `^3.0.94` | Custom OpenAI-compatible endpoints |
-| `@logtape/file` | `^2.4.2` | Rotating file sink |
 | `@logtape/logtape` | `^2.4.2` | Structured logging |
 | `@openrouter/ai-sdk-provider` | `^3.1.0` | OpenRouter provider |
 | `ai` | `^7.0.178` | Vercel AI SDK core |
