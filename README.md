@@ -277,7 +277,7 @@ If an agent is not installed on the machine, delegate does not run it.
 Useful commands:
 
 ```bash
-bun test
+bun run test
 bun run build
 bunx tsc -p tsconfig.json --noEmit
 bun run src/cli.ts --help

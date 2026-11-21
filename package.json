@@ -23,7 +23,7 @@
         "format:fix": "bunx --yes biome format --write .",
         "format:check": "bunx --yes biome format .",
         "prepack": "bun run build:binary",
-        "test": "bun test tests/*.test.ts --isolate",
+        "test": "bun run build && bun test tests/*.test.ts --isolate",
         "changelog:update": "git-cliff --config .github/config/cliff.toml -o CHANGELOG.md"
     },
     "dependencies": {

@@ -31,7 +31,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run test gate
-        run: bun test tests/*.test.ts --isolate
+        run: bun run test
 
   draft-release:
     name: Draft Release

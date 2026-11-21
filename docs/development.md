@@ -36,7 +36,7 @@ docs/                 Documentation
 
 | Command | Description |
 |---|---|
-| `bun test` | Run test suite |
+| `bun run test` | Build `dist/cli.js`, then run the test suite |
 | `bun run build` | Bundle CLI to `dist/cli.js` |
 | `bun run build:binary` | Compile standalone binary |
 | `bun run dev` | Run CLI from source (`bun run src/cli.ts`) |
@@ -73,8 +73,10 @@ Produces `consensus` binary.
 ## Testing
 
 ```bash
-bun test
+bun run test
 ```
+
+The package test checks `dist/cli.js`, so the script builds it before running the suite.
 
 Run specific test files:
 

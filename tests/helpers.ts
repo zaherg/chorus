@@ -9,6 +9,7 @@ export const testConfig = (overrides: Partial<ChorusConfig> = {}): ChorusConfig 
         provider_timeout_ms: 120_000,
         log_level: "info",
         max_concurrent_processes: 5,
+        allow_insecure_custom: false,
         ...overrides,
     };
 };
