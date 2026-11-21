@@ -127,7 +127,7 @@ Field notes:
 - `models[].stance` -- the stance the model ultimately took, or `null` on failure.
 - `models[].error` -- structured failure, or `null` on success.
 - `synthesis` -- synthesized text, or `null` when synthesis was not requested or failed.
-- `synthesis_error` -- structured synthesis failure, or `null` when synthesis succeeded or was not requested.
+- `synthesis_error` -- structured synthesis failure (`code: "provider_request_failed"` or `"synthesis_model_unresolved"`), or `null` when synthesis succeeded or was not requested.
 - `embeddedFiles` -- result of embedding referenced files into prompts.
 
 The command returns a successful broker response when at least one participant call completed. Failed participants keep their `route_id` / `provider` / `provider_model_id` and carry `response: null` plus a structured `error`. If all participant calls fail or a command-level catalog load fails, the command exits non-zero with a `cli.consensus.error/1` payload.
@@ -182,14 +182,23 @@ Completed malformed JSON or schema-invalid content exits with code `2`.
 | 1 | Operational or broker error, including stdin read failure, config load failure, all participant failures, or unrecoverable catalog failure |
 | 2 | Argument or request-validation error, including completed malformed JSON or schema-invalid stdin content |
 | 3 | Model resolution error (ambiguous or unknown participant or per-model selector, or no providers configured) |
+| 130 | Interrupted by `SIGINT` (Ctrl-C) |
+| 143 | Terminated by `SIGTERM` |
 
 ## `consensus list-models`
 
-List model IDs available from configured providers. The broker fetches and caches the public models.dev catalog and filters it to configured providers.
+List model IDs available from configured providers.
+The broker fetches and caches the public models.dev catalog and filters it to configured providers.
 
 ```
-consensus list-models [--json] [--refresh] [--help]
+consensus list-models [filter] [--json] [--refresh] [--help]
 ```
+
+### ARGUMENTS
+
+| Argument | Description |
+|---|---|
+| `[filter]` | Optional case-insensitive substring; keeps only models whose `route_id`, `display_name`, `provider_model_id`, or `canonical_model_id` contains it (for example `kimi`). |
 
 ### FLAGS
 
@@ -259,11 +268,13 @@ Per-provider `status`:
 - `catalog` -- the broker has models.dev rows for this configured provider; the `models[]` rows are executable `route_id` values.
 - `passthrough` -- the provider is configured but has no catalog rows; the agent may still send provider-prefixed IDs that the provider API will accept or reject.
 
-`cache.status`:
-- `fresh` -- successful fetch or current cache.
-- `stale` -- refresh failed, but the previous cache was used.
+`cache` fields:
+- `cache.status`: `fresh` (successful fetch or current cache) or `stale` (refresh failed, and a readable previous cache was used).
+- `cache.warning` (optional string): present when a cache warning occurred, such as falling back to stale data after a refresh failure.
 
-If refresh fails and no usable cache exists, the CLI prints a `models.list.error/1` payload with `error.code: "catalog_unavailable"` and exits non-zero.
+Error responses (`models.list.error/1` when `--json` is set, exit code `1`):
+- `error.code: "catalog_unavailable"` when refresh fails and no usable cache exists.
+- `error.code: "config_load_failed"` when loading or validating `~/.config/chorus/config.json` fails.
 
 The broker does not rank or choose models. `display_name`, `context_window`, `output_limit`, `supports_reasoning`, `supports_tools`, and `supports_structured_output` are stable metadata for the agent to consider; the broker does not use them to pick a "best" model.
 

@@ -14,11 +14,16 @@ Created on first run with sensible defaults (API keys are empty). On POSIX syste
   "provider_timeout_ms": 1800000,
   "log_level": "info",
   "max_concurrent_processes": 3,
-  "openrouter_api_key": "",
   "anthropic_api_key": "",
-  "google_vertex_api_key": "",
+  "openrouter_api_key": "",
   "amazon_bedrock_api_key": "",
+  "amazon_bedrock_region": "",
   "azure_api_key": "",
+  "azure_resource_name": "",
+  "azure_base_url": "",
+  "google_vertex_api_key": "",
+  "google_vertex_project": "",
+  "google_vertex_location": "",
   "custom_api_key": "",
   "custom_url": "",
   "allow_insecure_custom": false
@@ -33,34 +38,43 @@ Created on first run with sensible defaults (API keys are empty). On POSIX syste
 | `provider_timeout_ms` | integer | `1800000` | Per-provider API call timeout |
 | `log_level` | string | `"info"` | Logging level: `debug`, `info`, `warn`, `error` |
 | `max_concurrent_processes` | integer | `3` | Max concurrent provider calls in parallel mode |
-| `allow_insecure_custom` | boolean | `false` | Set to `true` to allow insecure custom provider URLs |
+| `allow_insecure_custom` | boolean | `false` | Set to `true` to allow `http://` on non-loopback public custom URLs (does not bypass private-IP, credential, fragment, or redirect checks) |
 
-### Provider API Keys
+### Provider Configuration
 
-Each provider has a corresponding config key:
+Each provider uses its API key and, where required by the provider SDK, its target region, resource, or project fields:
 
-| Key | Provider |
-|---|---|
-| `openrouter_api_key` | OpenRouter |
-| `anthropic_api_key` | Anthropic |
-| `google_vertex_api_key` | Google Vertex AI |
-| `amazon_bedrock_api_key` | Amazon Bedrock |
-| `azure_api_key` | Azure OpenAI |
-| `custom_api_key` | Custom OpenAI-compatible endpoint |
-| `custom_url` | Custom endpoint base URL |
+| Key | Provider | Purpose |
+|---|---|---|
+| `openrouter_api_key` | OpenRouter | API key |
+| `anthropic_api_key` | Anthropic | API key |
+| `amazon_bedrock_api_key` | Amazon Bedrock | API key (or use `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`, or `AWS_PROFILE`) |
+| `amazon_bedrock_region` | Amazon Bedrock | AWS region (also falls back to `AWS_REGION`, `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`, or `AWS_ENDPOINT_URL`) |
+| `azure_api_key` | Azure OpenAI | API key |
+| `azure_resource_name` | Azure OpenAI | Azure resource name (also falls back to `AZURE_RESOURCE_NAME`) |
+| `azure_base_url` | Azure OpenAI | Explicit Azure base URL (alternative to `azure_resource_name`) |
+| `google_vertex_api_key` | Google Vertex AI | API key |
+| `google_vertex_project` | Google Vertex AI | GCP project ID (also falls back to `GOOGLE_VERTEX_PROJECT`; pair with `google_vertex_location`) |
+| `google_vertex_location` | Google Vertex AI | GCP location/region (also falls back to `GOOGLE_VERTEX_LOCATION`; pair with `google_vertex_project`) |
+| `custom_api_key` | Custom OpenAI-compatible endpoint | API key |
+| `custom_url` | Custom OpenAI-compatible endpoint | Base URL |
 
 ### Custom Provider
 
 To replace a legacy `baseten_api_key`, see [Migrating from Baseten](./providers.md#migrating-from-baseten).
 
-`custom_url` must be set alongside `custom_api_key`. The CLI enforces HTTPS for non-loopback URLs. Local HTTP is allowed for `localhost`, `127.0.0.1`, and `::1`. URL credentials and fragments are rejected. Direct private/link-local hosts are rejected (this is not a full SSRF defense).
+`custom_url` must be set alongside `custom_api_key`.
+The CLI enforces HTTPS for non-loopback URLs, while literal `localhost`, `127.0.0.1`, and `::1` are allowed over `http://` by default.
+URL credentials, URL fragments, `.localhost` subdomains, private/RFC 6890/link-local IP addresses (including IPv4-mapped IPv6 literals), DNS resolutions to blocked/loopback addresses, and all HTTP redirects are always rejected.
+At connection time, `createSafeCustomFetch` validates and pins the resolved IP addresses to mitigate DNS rebinding.
 
-To allow insecure custom URLs on any host:
+Setting `allow_insecure_custom` to `true` only relaxes the `https://` scheme check so plain `http://` can be used on public hosts.
+It does not allow private RFC 1918 hosts, `.localhost` subdomains, credentials, fragments, or redirects:
 
 ```json
 {
   "allow_insecure_custom": true,
-  "custom_url": "http://my-internal-server/v1",
+  "custom_url": "http://api.example.com/v1",
   "custom_api_key": "$CUSTOM_API_KEY"
 }
 ```

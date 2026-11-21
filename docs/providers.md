@@ -10,12 +10,12 @@ The broker supports 6 providers: 5 catalog-backed providers plus 1 passthrough p
 
 These providers have a models.dev catalog key. The broker fetches and caches their model rows and exposes them as executable `route_id` values. Run `consensus list-models --json` to see the rows available for your configured providers.
 
-| Provider | Config Key | models.dev key |
+| Provider | Config Keys | models.dev key |
 |---|---|---|
-| Amazon Bedrock | `amazon_bedrock_api_key` | `amazon-bedrock` |
+| Amazon Bedrock | `amazon_bedrock_api_key` (or AWS credentials) + `amazon_bedrock_region` (or `AWS_REGION`) | `amazon-bedrock` |
 | Anthropic | `anthropic_api_key` | `anthropic` |
-| Azure | `azure_api_key` | `azure` |
-| Google Vertex AI | `google_vertex_api_key` | `google-vertex` |
+| Azure | `azure_api_key` + `azure_resource_name` (or `azure_base_url` / `AZURE_RESOURCE_NAME`) | `azure` |
+| Google Vertex AI | `google_vertex_api_key` (or `google_vertex_project` + `google_vertex_location`) | `google-vertex` |
 | OpenRouter | `openrouter_api_key` | `openrouter` |
 
 ### Passthrough (Tier 2)
@@ -42,10 +42,10 @@ To try Baseten’s OpenAI-compatible Model APIs, set `BASETEN_API_KEY` in the en
 
 Chorus has one custom endpoint: changing `custom_url` sends **all** `custom/` requests to that URL.
 Change `baseten/` to `custom/` wherever you use the route, including `--models`, `--synthesis-model`, and saved JSON requests; keep the rest of the model ID unchanged.
-Before updating saved requests, replace `<model-id>` with a model available to your Baseten account and test one prompt:
+Before updating saved requests, replace `<model-id>` with a model available to your Baseten account and test with at least two models (`consensus` requires a minimum of 2 models):
 
 ```bash
-consensus --models 'custom/<model-id>' --prompt 'Reply with OK.'
+consensus --models 'custom/<model-id>,openrouter/openai/gpt-5.2' --prompt 'Reply with OK.'
 ```
 
 ## Catalog Fetch and Cache
@@ -130,12 +130,13 @@ Custom, Azure, Vertex AI, and Bedrock ignore thinking mode.
 
 ## Custom Provider URL Validation
 
-Custom endpoints (`custom_url`) are validated:
+Custom endpoints (`custom_url`) are validated at configuration and connection time:
 
-- HTTPS required for non-loopback hosts.
-- HTTP allowed for `localhost`, `127.0.0.1`, and `::1`.
-- URL credentials (`user:pass@`) rejected.
-- URL fragments (`#`) rejected.
-- Direct private/link-local hosts rejected, including IPv4-mapped IPv6 literals. This is not a full SSRF defense.
+- HTTPS is required for non-loopback hosts.
+- HTTP is allowed for literal `localhost`, `127.0.0.1`, and `::1`.
+- URL credentials (`user:pass@`) and URL fragments (`#`) are rejected.
+- Private, RFC 6890, and link-local IP addresses (including IPv4-mapped IPv6 literals), `.localhost` subdomains, and DNS records resolving to blocked or loopback addresses are rejected.
+- `createSafeCustomFetch` pins resolved IPs at connection time via `node:http`/`node:https` and blocks all HTTP redirects (`redirect: "manual"` and 3xx rejection).
 
-Set `allow_insecure_custom` to `true` to bypass these checks.
+Set `allow_insecure_custom` to `true` only to relax the `https://` requirement and allow `http://` on public hosts.
+It does not bypass credential, fragment, private/RFC 6890 IP, `.localhost`, DNS-to-loopback, or HTTP redirect checks.

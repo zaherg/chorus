@@ -23,7 +23,6 @@
 |---|---|
 | `README.md` | Project overview and quick start |
 | `CHANGELOG.md` | Version history (Keep a Changelog format) |
-| `CONCEPTS.md` | Shared domain vocabulary |
 | `SECURITY.md` | Security model and trust boundaries |
 | `DISCLAIMER.md` | Legal disclaimer |
 | `LICENSE` | License file |

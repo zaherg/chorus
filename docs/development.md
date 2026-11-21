@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) 1.3.9 or newer
+- [Bun](https://bun.sh) 1.4.5 (pinned in `package.json`)
 - Node.js types (auto-installed via `bun install`)
 
 ## Setup
@@ -24,9 +24,9 @@ src/
   consensus.ts        Core consensus engine
   commands/           CLI command handlers
   prompts/            System prompts
-  providers/          Provider registry, discovery, selection
+  providers/          Provider registry, models.dev catalog & cache, route resolution, custom URL guards
   types/              Zod schemas and TypeScript types
-  utils/              Error, file, logging, token utilities
+  utils/              Helpers (`helpers.ts`), file embedding (`files.ts`), logging (`logger.ts`), prompt builders (`prompts.ts`)
 skills/               Agent skill definitions
 tests/                bun:test suite
 docs/                 Documentation
@@ -38,7 +38,7 @@ docs/                 Documentation
 |---|---|
 | `bun run test` | Build `dist/cli.js`, then run the test suite |
 | `bun run build` | Bundle CLI to `dist/cli.js` |
-| `bun run build:binary` | Compile standalone binary |
+| `bun run build:binary` | Compile 5 standalone platform binaries into `dist/` |
 | `bun run dev` | Run CLI from source (`bun run src/cli.ts`) |
 | `bun run lint:check` | Check lint rules via Biome |
 | `bun run lint:fix` | Auto-fix lint violations via Biome |
@@ -62,13 +62,14 @@ bun run build
 
 Produces `dist/cli.js` with a bun shebang. This is the artifact distributed via npm.
 
-For a standalone binary (no Bun runtime needed):
+For standalone binaries (no Bun runtime needed):
 
 ```bash
 bun run build:binary
 ```
 
-Produces `consensus` binary.
+Produces 5 platform binaries under `dist/`:
+`consensus-darwin-arm64`, `consensus-darwin-x64`, `consensus-linux-x64`, `consensus-linux-arm64`, and `consensus-windows-x64.exe`.
 
 ## Testing
 
@@ -174,7 +175,7 @@ There is no local release script; see [RELEASING.md](../RELEASING.md) for the st
 
 ### Changelog
 
-Uses [git-cliff](https://github.com/orhun/git-cliff) with `cliff.toml` config:
+Uses [git-cliff](https://github.com/orhun/git-cliff) with `.github/config/cliff.toml`:
 
 ```bash
 bun run changelog:update -- --tag vX.Y.Z
@@ -188,21 +189,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 | Package | Version | Purpose |
 |---|---|---|
-| `ai` | ^7.0.83 | Vercel AI SDK core |
-| `@ai-sdk/amazon-bedrock` | ^5.0.66 | Amazon Bedrock provider |
-| `@ai-sdk/anthropic` | ^4.0.44 | Anthropic provider |
-| `@ai-sdk/azure` | ^4.0.52 | Azure provider |
-| `@ai-sdk/google-vertex` | ^5.0.67 | Google Vertex AI provider |
-| `@ai-sdk/openai-compatible` | ^3.0.39 | Custom OpenAI-compatible endpoints |
-| `@openrouter/ai-sdk-provider` | ^3.0.0 | OpenRouter provider |
-| `zod` | ^4.4.3 | Schema validation |
-| `@logtape/logtape` | ^2.3.2 | Structured logging |
-| `@logtape/file` | ^2.3.2 | Rotating file sink |
+| `@ai-sdk/amazon-bedrock` | `^5.0.146` | Amazon Bedrock provider |
+| `@ai-sdk/anthropic` | `^4.0.107` | Anthropic provider |
+| `@ai-sdk/azure` | `^4.0.130` | Azure provider |
+| `@ai-sdk/google-vertex` | `^5.0.143` | Google Vertex AI provider |
+| `@ai-sdk/openai-compatible` | `^3.0.94` | Custom OpenAI-compatible endpoints |
+| `@logtape/file` | `^2.4.2` | Rotating file sink |
+| `@logtape/logtape` | `^2.4.2` | Structured logging |
+| `@openrouter/ai-sdk-provider` | `^3.1.0` | OpenRouter provider |
+| `ai` | `^7.0.178` | Vercel AI SDK core |
+| `minimist` | `^1.2.8` | CLI argument parsing |
+| `zod` | `^4.6.7` | Schema validation |
 
 ### Dev
 
 | Package | Version | Purpose |
 |---|---|---|
-| `@types/bun` | ^1.3.14 | Bun type definitions |
-| `@types/node` | 25.4.0 | Node.js type definitions |
-| `typescript` | ^5.9.3 | TypeScript compiler |
+| `@biomejs/biome` | `2.6.8` | Linter and formatter |
+| `@types/bun` | `^1.4.5` | Bun type definitions |
+| `@types/minimist` | `^1.2.5` | `minimist` type definitions |
+| `@types/node` | `26.1.1` | Node.js type definitions |
+| `typescript` | `^7.0.2` | TypeScript compiler |

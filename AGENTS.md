@@ -53,7 +53,7 @@ This file defines principles and contracts that remain stable while implementati
 - Catalog data is validated, normalized, cached, and may serve safe stale data after fetch failure.
 - Custom API URLs reject credentials, fragments, private and loopback targets, and IPv4-mapped IPv6 bypasses.
 - `resolveAndValidateHostname` protects connection-time DNS resolution.
-- `createSafeCustomFetch` validates every custom request and redirect target.
+- `createSafeCustomFetch` validates every custom request, pins resolved IPs at connection time, and blocks all HTTP redirects.
 - API keys come from environment variables or `$ENV_VAR` configuration references.
 - Config directory and file permissions are repaired to `0700` and `0600`.
 
@@ -75,6 +75,5 @@ This file defines principles and contracts that remain stable while implementati
 
 ## NOTES
 
-- `src/utils.ts` and `src/utils/` coexist, so bare `@/utils` resolves to the file.
 - Import consensus contracts directly from `@/types/consensus`.
 - `src/types/index.ts` intentionally omits consensus contract exports.

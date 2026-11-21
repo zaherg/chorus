@@ -1,10 +1,12 @@
 # Agent Skills
 
-Skills follows the [Agent Skills specification](https://agentskills.io/specification). Two skills are bundled in `skills/skills/`. A third development-time skill, `index-knowledge`, lives in `.agents/skills/`.
+Chorus follows the [Agent Skills specification](https://agentskills.io/specification).
+Two skills are bundled in `skills/`.
+A third development-time skill, `index-knowledge`, lives in `.agents/skills/`.
 
 ## `consensus` Skill
 
-**Path:** `skills/skills/consensus/SKILL.md`
+**Path:** `skills/consensus/SKILL.md`
 
 Multi-model consensus for coding agents. The `consensus` CLI is a broker: it returns one raw record per requested model so the agent can compare, combine, or judge responses on its own.
 
@@ -117,8 +119,8 @@ consensus \
 `consensus list-models --json` returns the configured-provider catalog with shape `models.list/1`. It includes:
 
 - `cache.status` -- `fresh` (cache is current) or `stale` (refresh failed, previous cache used).
-- `providers[].status` -- `catalog` (executable `route_id` rows) or `passthrough` (no catalog rows).
-- `providers[].models[].route_id` -- the exact CLI input the agent should pass to `--models` or `--synthesis-model`.
+- `providers.<provider>.status` -- `catalog` (executable `route_id` rows) or `passthrough` (no catalog rows), where `providers` is a record keyed by provider ID.
+- `providers.<provider>.models[].route_id` -- the exact CLI input the agent should pass to `--models` or `--synthesis-model`.
 
 Plugin model IDs (`copilot/...`, `codex/...`, `claude/...`) are NOT supported.
 
@@ -159,7 +161,7 @@ claude --print "Review this PR for security issues. Files: src/api/handlers.ts" 
 #### Codex (OpenAI)
 
 ```bash
-codex exec "Generate unit tests for src/utils/tokens.ts covering edge cases"
+codex exec "Generate unit tests for src/utils/helpers.ts covering edge cases"
 ```
 
 #### Pi Coding Agent
@@ -241,7 +243,7 @@ cat /tmp/consensus-tests.log
 #### Delegate + consensus
 
 ```bash
-REVIEW=$(codex "Review src/consensus.ts for correctness and edge cases")
+REVIEW=$(codex exec "Review src/consensus.ts for correctness and edge cases")
 consensus \
   --models "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro" \
   --prompt "Evaluate this code review: $REVIEW" \
@@ -260,7 +262,7 @@ cd /path/to/project && claude --print "Run the test suite and fix any failures"
 ### Notes
 
 - Each CLI agent must be installed separately and available on `PATH`
-- Skills does not manage or install these agents
+- Chorus does not manage or install these agents
 - For structured multi-model debate, use `consensus` instead of manual delegation
 - Never try another agent if the one the user asked for didn't work or sidetracked
 

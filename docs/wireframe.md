@@ -27,13 +27,12 @@
 │   └──────────┘    └─────────────┘    └────────────────┘                     │
 │                                                                              │
 │   ┌─────────────┐   ┌──────────────────────┐                                │
-│   │  --version  │──►│  consensus 0.0.1\n   │                                │
+│   │  --version  │──►│  consensus 0.2.0\n   │                                │
 │   └─────────────┘   └──────────────────────┘                                │
 │                                                                              │
 │   ┌──────────────────┐   ┌───────────────────────────────────────────┐      │
-│   │  consensus       │──►│  commands/consensus.runConsensusCommand   │      │
-│   │  list-models     │──►│  commands/list-models.runListModelsCmd    │      │
-│   │  (bare flags)    │──►│  commands/consensus.runConsensusCommand   │      │
+│   │  list-models     │──►│  commands/list-models.runListModelsCommand│      │
+│   │  (no args/flags) │──►│  commands/consensus.runConsensusCommand   │      │
 │   └──────────────────┘   └───────────────────────────────────────────┘      │
 └────────────────────────────────┬────────────────────────────────────────────┘
                                  │
@@ -163,18 +162,19 @@
 │  │  provider_timeout_ms:     │  │   │  │  stderr      (all)       │   │
 │  │    1800000                │  │   │  │                          │   │
 │  │  log_level: "info"        │  │   │  │  JSON Lines format       │   │
-│  │  max_concurrent: 5        │  │   │  │  Rotating (5MB x 3)      │   │
-│  │                            │  │   │  │  Secret redaction       │   │
-│  │  openrouter_api_key:          │  │   │  └──────────────────────────┘   │
-│  │    "$OPENROUTER_API_KEY"      │  │   │                                  │
+│  │  max_concurrent_proc.: 3  │  │   │  │  Rotating (5MB x 3)      │  │
+│  │                            │  │   │  │  Secret redaction       │  │
+│  │  openrouter_api_key:      │  │   │  └──────────────────────────┘   │
+│  │    "$OPENROUTER_API_KEY"  │  │   │                                  │
 │  │  anthropic_api_key: ...   │  │   └──────────────────────────────────┘
 │  │  custom_url: ...          │  │
 │  │                            │  │   ┌──────────────────────────────────┐
 │  │  Zod v4 validated          │  │   │           Utilities              │
 │  │  0700 dir / 0600 file      │  │   │                                  │
-│  │  $ENV_VAR resolution       │  │   │  errors.ts  getErrorMessage()   │
-│  └────────────────────────────┘  │   │  files.ts   embedFiles()        │
-│                                  │   │  tokens.ts  estimateTokenCount() │
+│  │  $ENV_VAR resolution       │  │   │  helpers.ts getErrorMessage(),  │
+│  └────────────────────────────┘  │   │             estimateTokenCount()│
+│                                  │   │  files.ts   embedFiles()        │
+│                                  │   │  prompts.ts build*Prompt()      │
 └──────────────────────────────────┘   └──────────────────────────────────┘
 
 

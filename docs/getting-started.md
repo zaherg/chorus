@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) 1.3.9 or newer (for source builds)
+- [Bun](https://bun.sh) 1.4.5 or newer (for source builds; see `package.json`)
 - API keys for at least one supported provider
 
 ## Installation
@@ -150,6 +150,8 @@ The CLI is a broker. It returns raw participant responses for the agent to compa
 | 1    | Consensus error (all participants failed, config error, catalog unavailable) |
 | 2    | Argument parse error (missing required flags, invalid values) |
 | 3    | Model resolution error (unknown or ambiguous model ID) |
+| 130  | Interrupted by `SIGINT` (Ctrl-C) |
+| 143  | Terminated by `SIGTERM` |
 
 ## Key Concepts
 
@@ -165,8 +167,6 @@ CLI-side synthesis is opt-in. Provide `--synthesis-model <route_id>` when the us
 
 - **Parallel (default):** All models queried concurrently. Each model sees only the original prompt.
 - **Sequential (`--sequential`):** Models queried one at a time. Each model sees prior responses plus the original prompt.
-
-See [CONCEPTS.md](../CONCEPTS.md) for full domain vocabulary.
 
 ## Next Steps
 

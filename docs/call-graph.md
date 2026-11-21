@@ -11,7 +11,6 @@ ENTRY POINT
 
 src/cli.ts
   runCli()
-    ├── config.loadConfig()
     ├── printHelp()
     ├── commands/consensus.runConsensusCommand()
     └── commands/list-models.runListModelsCommand()
@@ -23,19 +22,22 @@ CLI COMMANDS
 
 src/commands/consensus.ts
   runConsensusCommand()
+    ├── parseConsensusArgs()
+    │     ├── commands/boolean-options.validateKnownBooleanTokens()
+    │     ├── normalizeConsensusScalar()
+    │     ├── normalizeRepeatableOption()
+    │     └── parseModelKeyValueFlags()
+    ├── findStdinJsonConflict()
     ├── config.loadConfig()
     ├── utils/logger.configureLogging()
+    ├── providers/cache-fs.makeLocalFileReader() / makeLocalFileWriter()
     ├── providers/model-catalog.loadCatalog()
-    │     ├── FileReader
-    │     ├── FileWriter
+    │     ├── FileReader / FileWriter
     │     ├── fetchFn (globalThis.fetch)
     │     └── → writes ~/.config/chorus/models-cache/{catalog,metadata}.json
     ├── providers/registry.createProviderRegistry()
     ├── providers/resolve-route.resolveRoute()
-    ├── parseModelKeyValueFlags()
-    ├── parseRepeatableFlag()
-    ├── parseSingleFlag()
-    ├── parseBooleanFlag()
+    ├── utils/helpers.getErrorMessage()
     │
     └── consensus.runConsensus()
           ├── utils/files.embedFiles()
@@ -44,15 +46,19 @@ src/commands/consensus.ts
 
 src/commands/list-models.ts
   runListModelsCommand()
+    ├── parseListModelsArgs()
+    │     └── commands/boolean-options.validateKnownBooleanTokens()
     ├── config.loadConfig()
     ├── utils/logger.configureLogging()
+    ├── providers/cache-fs.makeLocalFileReader() / makeLocalFileWriter()
     ├── providers/model-catalog.loadCatalog()
-    │     ├── FileReader
-    │     ├── FileWriter
+    │     ├── FileReader / FileWriter
     │     ├── fetchFn (globalThis.fetch)
     │     └── → writes ~/.config/chorus/models-cache/{catalog,metadata}.json
-    ├── providers/registry.isProviderConfigured()
-    └── formatHuman() / JSON.stringify()
+    ├── filterConfiguredProviders()
+    │     └── providers/registry.isProviderConfigured()
+    ├── applyModelFilter()
+    └── formatHuman() / formatHumanError() / JSON.stringify()
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -62,20 +68,22 @@ CORE CONSENSUS ENGINE
 src/consensus.ts
   runConsensus()
     ├── utils/files.embedFiles()
+    │     ├── resolveAllowedRoots()
     │     ├── isAllowedPath()
-    │     ├── getAllowedRoots()
-    │     └── utils/tokens.estimateTokenCount()
+    │     ├── isSensitivePath()
+    │     ├── readBoundedTextFile()
+    │     └── utils/helpers.estimateTokenCount()
     │
     ├── runSettledWithConcurrency()          (parallel mode)
     │     └── queryModel()                   (spawned per model)
-    │           ├── buildConsensusPrompt()
+    │           ├── utils/prompts.buildConsensusPrompt()
     │           └── registry.generateText()
     │
     ├── queryModel()                         (sequential mode, called directly)
-    │     ├── buildConsensusPrompt()
+    │     ├── utils/prompts.buildConsensusPrompt()
     │     └── registry.generateText()
     │
-    ├── buildSynthesisPrompt()
+    ├── utils/prompts.buildSynthesisPrompt()
     │
     └── registry.generateText()              (optional synthesis call)
 
@@ -87,55 +95,56 @@ PROVIDER SYSTEM
 src/providers/registry.ts
   createProviderRegistry()
     ├── closure state: config, generateTextFn,
-    │     providerFactories map, configuredProviders cache
+    │     providerFactories map
     │
     ├── creates arrow-function methods:
     │     isProviderConfigured(), generateText()
     │
-    └── helpers (local to closure):
-          ├── configuredProviders()           (which providers have API keys)
+    └── helpers:
+          ├── createProviderAbortSignal()
           ├── buildProviderOptions()          (ThinkingMode → provider options)
-          ├── getProviderFactory()
-          │     └── createProviderFactory()   (lazy, @ai-sdk provider instances)
+          ├── createProviderFactory()         (lazy, @ai-sdk provider instances)
           │
           and standalone exports:
                 isProviderConfigured(),
                 providerConfigurationErrorMessage()
 
 src/providers/model-catalog.ts
-  loadCatalog()
+  loadCatalog() / loadCatalogDedup()
     ├── FileReader / FileWriter               (injected; testable)
     ├── fetchFn                               (globalThis.fetch by default)
-    ├── validateCache()                       (CatalogJsonSchema)
-    ├── fetchCatalog()                        (POST/GET https://models.dev/catalog.json)
-    └── writeCacheFiles()                     (catalog.json + metadata.json)
+    ├── readCache()                           (CatalogJsonSchema + CacheMetadataSchema)
+    ├── fetchCatalog()                        (GET https://models.dev/catalog.json)
+    ├── writeCache() / writeMetadata()        (catalog.json + metadata.json)
+    └── normalizeProviderModels()
 
-  getCachedCatalog()
-  clearCache()
+src/providers/cache-fs.ts
+  makeLocalFileReader()
+  makeLocalFileWriter()
+  resolveCachePath()
 
 src/providers/provider-map.ts
   getModelsDevProviderKey()                   (ProviderId → models.dev key)
-  getProviderIdForModelsDevKey()              (inverse)
   isCatalogBackedProvider()                   (catalog vs passthrough)
 
 src/providers/resolve-route.ts
   resolveRoute()
     ├── parseRouteId()                        (split on first "/")
-    ├── lookupExactRoute()                    (configured catalog match)
-    ├── lookupUnqualifiedRoute()              (unique provider-native match)
-    ├── detectAmbiguous()                     (returns candidate route_id[])
-    └── lookupPassthroughRoute()              (custom prefix)
-
-  getRouteCandidates()                        (for ambiguity response)
+    └── classifyInput()                       (exact / unqualified / ambiguous / passthrough)
 
 src/providers/custom-url.ts
   customProviderBaseUrl()
     └── validateCustomApiUrl()
           ├── isLoopbackHost()
           ├── isBlockedHost()
-          │     ├── isBlockedIpv4()
-          │     └── isBlockedIpv6()
+          │     └── isBlockedIpAddress()
+          │           ├── isBlockedIpv4()
+          │           └── isBlockedIpv6()
           └── normalizeHostname()
+
+  createSafeCustomFetch()
+    ├── resolveAndValidateHostname()
+    └── pinnedHttpTransport()                 (node:http / node:https pinned IP lookup, blocks redirects)
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -162,20 +171,28 @@ src/utils/logger.ts
     ├── config.getConfigPaths()
     ├── resolveLogLevel()
     ├── @logtape/logtape.configure()
-    └── @logtape/file.getRotatingFileSink()
+    └── createRotatingFileSink()
 
   wrapLogger() ──► logger (global)
   redactSecrets()
 
 src/utils/files.ts
   embedFiles()
-    ├── getAllowedRoots()
+    ├── resolveAllowedRoots()
     ├── isAllowedPath()
-    └── utils.estimateTokenCount()
+    ├── isSensitivePath()
+    ├── readBoundedTextFile()
+    └── utils/helpers.estimateTokenCount()
 
-src/utils.ts
+src/utils/helpers.ts
   getErrorMessage()
   estimateTokenCount()
+
+src/utils/prompts.ts
+  buildConsensusPrompt()
+  buildSynthesisPrompt()
+  escapeEmbeddedFilesTag()
+  serializeSafeJson()
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -184,19 +201,25 @@ TYPE EXPORTS (no runtime calls)
 
 src/types/providers.ts
   ProviderIdSchema, BrokerModelInfoSchema, ModelsListResponseSchema,
-  ModelsListErrorSchema, ProviderListEntrySchema, CacheInfoSchema,
-  CatalogJsonSchema, ProviderModelEntrySchema, CacheMetadataSchema  (Zod schemas)
+  ProviderListEntrySchema, CacheInfoSchema, CatalogJsonSchema,
+  ProviderModelEntrySchema, CacheMetadataSchema                        (Zod schemas)
   ProviderId, BrokerModelInfo, ModelsListResponse, ...                 (TS types)
 
 src/types/consensus.ts
   Stance, ConsensusModelConfig, ParticipantResponse, ParticipantError,
-  ConsensusRequest, ConsensusResult, ConsensusError                    (TS types)
+  SynthesisError, ConsensusRequest, ConsensusResult, ConsensusError    (TS types)
+
+src/types/files.ts
+  EmbeddedFileResult                                                   (TS interface)
+
+src/types/boolean-options.ts
+  BooleanTokenValidation                                               (TS type)
 
 src/types/tools.ts
   ToolError, Result<T, E>                                              (TS types)
 
 src/types/index.ts
-  re-exports providers.ts + tools.ts
+  re-exports providers.ts + tools.ts (intentionally omits consensus.ts)
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -204,7 +227,7 @@ PROMPTS (no runtime calls)
 ═══════════════════════════════════════════════════════════════════════════════
 
 src/prompts/consensus.ts
-  CONSENSUS_SYSTEM_PROMPT   (string constant, imported by consensus.ts + registry.ts)
+  CONSENSUS_SYSTEM_PROMPT   (string constant, imported by consensus.ts)
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -212,20 +235,18 @@ COMPLETE CALL CHAIN: consensus --models "openrouter/openai/gpt-5.2,anthropic/cla
 ═══════════════════════════════════════════════════════════════════════════════
 
 cli.runCli()
-  └── config.loadConfig()
-        └── resolveEnvVars() ──► ChorusConfigSchema.parse()
-
-cli.runCli()
   └── commands/consensus.runConsensusCommand()
+        ├── parseConsensusArgs()
         ├── config.loadConfig()
+        │     └── resolveEnvVars() ──► ChorusConfigSchema.parse()
         ├── utils/logger.configureLogging()
+        ├── providers/cache-fs.makeLocalFileReader() / makeLocalFileWriter()
         ├── providers/model-catalog.loadCatalog()
-        │     ├── FileReader / FileWriter
-        │     ├── fetchFn (globalThis.fetch)
+        │     ├── readCache() / fetchCatalog()
         │     └── → ~/.config/chorus/models-cache/{catalog,metadata}.json
         ├── providers/registry.createProviderRegistry(config)
         ├── providers/resolve-route.resolveRoute("openrouter/openai/gpt-5.2")      ──► BrokerModelInfo
-        ├── providers/resolve-route.resolveRoute("anthropic/claude-sonnet-4-5") ──► BrokerModelInfo
+        ├── providers/resolve-route.resolveRoute("anthropic/claude-sonnet-4-5")    ──► BrokerModelInfo
         │
         └── consensus.runConsensus({
               models: [{model:"openrouter/openai/gpt-5.2"},{model:"anthropic/claude-sonnet-4-5"}],
@@ -234,23 +255,25 @@ cli.runCli()
             })
               │
               ├── embedFiles()            (if --files provided)
-              │     ├── getAllowedRoots()
+              │     ├── resolveAllowedRoots()
               │     ├── isAllowedPath()
-              │     └── estimateTokenCount()
+              │     ├── isSensitivePath()
+              │     ├── readBoundedTextFile()
+              │     └── utils/helpers.estimateTokenCount()
               │
               ├── runSettledWithConcurrency([a, b], maxConcurrency, queryModel)
               │     ├── queryModel(a)
-              │     │     ├── buildConsensusPrompt("for", "p")
+              │     │     ├── utils/prompts.buildConsensusPrompt("for", "p")
               │     │     └── registry.generateText("openrouter/openai/gpt-5.2", prompt, systemPrompt)
-              │     │           ├── buildProviderOptions()
-              │     │           ├── getProviderFactory() ──► createProviderFactory()
+              │     │           ├── createProviderAbortSignal()
+              │     │           ├── createProviderFactory()
               │     │           └── ai.generateText()     (Vercel AI SDK)
               │     │
               │     └── queryModel(b)
-              │           ├── buildConsensusPrompt("against", "p")
+              │           ├── utils/prompts.buildConsensusPrompt("against", "p")
               │           └── registry.generateText("anthropic/claude-sonnet-4-5", ...)
               │
-              ├── buildSynthesisPrompt("p", successfulResponses)
+              ├── utils/prompts.buildSynthesisPrompt("p", successfulResponses)
               │     (only if --synthesis-model set and at least one participant succeeded)
               │
               └── registry.generateText(synthesisRoute, synthesisPrompt, ...)

@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | **Package** | `@zaherg/chorus` |
-| **Runtime** | [Bun](https://bun.sh) (`1.4.0`) |
+| **Runtime** | [Bun](https://bun.sh) (`1.4.5`) |
 | **Language** | TypeScript (`7.0.2`) |
 | **Binary name** | `consensus` |
 | **Entry point** | `src/cli.ts` → `dist/cli.js` |
@@ -30,28 +30,33 @@ The project ships a single CLI binary, `consensus`, that brokers between agents 
 │   ├── config.ts                # Config loader, env-var schema (Zod)
 │   ├── consensus.ts             # Core consensus engine
 │   ├── commands/
-│   │   ├── consensus.ts         # `consensus` CLI subcommand handler
+│   │   ├── boolean-options.ts   # Strict CLI boolean flag validator
+│   │   ├── consensus.ts         # Top-level consensus CLI handler
 │   │   └── list-models.ts       # `list-models` CLI subcommand handler (models.list/1)
 │   ├── prompts/
 │   │   └── consensus.ts         # System prompt literal
 │   ├── providers/
+│   │   ├── cache-fs.ts          # Local filesystem reader/writer for models-cache
 │   │   ├── registry.ts          # createProviderRegistry factory (SDK factories,
 │   │   │                          generateText, model resolution to AI SDK)
 │   │   ├── model-catalog.ts     # models.dev catalog fetch, cache, validate, normalize
 │   │   ├── provider-map.ts      # Internal ProviderId to models.dev provider key map
 │   │   ├── resolve-route.ts     # route_id parsing, exact / unqualified / passthrough
-│   │   └── custom-url.ts        # Custom provider URL validation + SSRF guard
+│   │   └── custom-url.ts        # Custom provider URL validation, IP pinning, redirect block
 │   ├── types/
-│   │   ├── index.ts             # Re-exports
+│   │   ├── index.ts             # Re-exports providers + tools (omits consensus contracts)
+│   │   ├── boolean-options.ts   # Boolean option definitions
 │   │   ├── consensus.ts         # ConsensusRequest, ConsensusResult, ConsensusError,
 │   │   │                          ParticipantResponse
+│   │   ├── files.ts             # EmbeddedFileResult interface
 │   │   ├── providers.ts         # Zod schemas for ProviderId, ModelsListResponse,
 │   │   │                          BrokerModelInfo
 │   │   └── tools.ts             # ToolError, Result<T,E> (discriminated union)
 │   └── utils/
-│       ├── files.ts             # File-embedding with path allowlist + token budget
-│       └── logger.ts            # Structured logging (LogTape), secret redaction
-├── src/utils.ts                 # getErrorMessage() + estimateTokenCount() helpers
+│       ├── files.ts             # File-embedding with path allowlist, denylist, token budget
+│       ├── helpers.ts           # getErrorMessage() + estimateTokenCount() helpers
+│       ├── logger.ts            # Structured logging (LogTape), secret redaction
+│       └── prompts.ts           # Prompt builders and safe embedded-file escaping
 ├── tests/                       # Bun test suite (15 files)
 ├── skills/
 │   ├── consensus/
@@ -84,8 +89,8 @@ User invokes:  consensus list-models --json
                                   ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │  cli.ts (runCli)                                                 │
-│  ├─ Routes to commands/consensus.ts or commands/list-models.ts   │
-│  └─ If no subcommand, treats bare flags as `consensus`           │
+│  ├─ Routes `list-models` to commands/list-models.ts              │
+│  └─ Routes bare flags or no args to commands/consensus.ts        │
 └──────────────────────────────┬───────────────────────────────────┘
                                │
                                ▼
@@ -130,20 +135,21 @@ User invokes:  consensus list-models --json
 
 ### 4.1 `src/cli.ts` -- Entry Point
 
-**Purpose:** Top-level CLI routing. Detects whether `consensus` was invoked
-with a subcommand or with bare flags.
+**Purpose:** Top-level CLI routing.
+Routes `list-models`, `--version`/`-v`, and `--help`/`-h`/`help`, and dispatches bare flags or empty arguments directly to the consensus command.
 
 **Exports:**
 - `runCli(args: string[]): Promise<number>` -- the entry function
-- Calls `printHelp()` for `--help`, `help`, or no args
-- Calls `runConsensusCommand()` for bare flags or the `consensus` subcommand
-- Calls `runListModelsCommand()` for `list-models`
-- `import.meta.main` block reads `process.argv` and calls `runCli`. The CLI
-  reads its version from `package.json` at build time.
+- Calls `printHelp()` and returns `0` for `--help`, `-h`, or `help`
+- Prints `consensus <version>` and returns `0` for `--version` or `-v`
+- Calls `runListModelsCommand(args.slice(1))` for `list-models`
+- Calls `runConsensusCommand(args)` for bare flags (starting with `-`) or no args (which reports missing required flags and returns exit code `2`)
+- Calls `printHelp()` and returns `1` for unknown positional subcommands
+- `import.meta.main` block reads `process.argv`, wires `SIGINT` (exit `130`) and `SIGTERM` (exit `143`), and calls `runCli`.
+  The CLI reads its version from `package.json` at build time.
 
-**Design note:** Bare flags (`--models`, etc.) are treated as a shorthand for
-`consensus --models ...`. The subcommand `consensus` is optional -- either form
-works.
+**Design note:** There is no `consensus consensus` subcommand.
+Top-level `consensus` runs consensus directly, and `list-models` is the only operational subcommand.
 
 ---
 
@@ -161,12 +167,17 @@ works.
 | `max_concurrent_processes` | Parallel model query limit (default 3) |
 | `openrouter_api_key` | OpenRouter API key |
 | `anthropic_api_key` | Anthropic API key |
-| `google_vertex_api_key` | Google Vertex AI API key |
 | `amazon_bedrock_api_key` | Amazon Bedrock API key |
+| `amazon_bedrock_region` | Amazon Bedrock AWS region |
 | `azure_api_key` | Azure API key |
+| `azure_resource_name` | Azure resource name |
+| `azure_base_url` | Azure custom base URL |
+| `google_vertex_api_key` | Google Vertex AI API key |
+| `google_vertex_project` | Google Vertex AI GCP project ID |
+| `google_vertex_location` | Google Vertex AI GCP location |
 | `custom_api_key` | Custom endpoint API key |
 | `custom_url` | Custom endpoint base URL |
-| `allow_insecure_custom` | Set to `true` to allow `http://` custom URLs |
+| `allow_insecure_custom` | Set to `true` to allow `http://` on public custom URLs (does not relax IP/redirect checks) |
 
 **Exports:**
 - `ChorusConfig` (Zod-inferred type)
@@ -360,24 +371,18 @@ The broker never suffix-matches model IDs.
 
 #### 4.7.5 `custom-url.ts` -- Custom Provider URL Validation
 
-**Purpose:** Validate and secure custom API endpoint URLs.
+**Purpose:** Validate and secure custom API endpoint URLs at configuration and connection time.
 
 **Security checks:**
-1. Must be a valid URL (`new URL()`)
-2. Protocol must be `http://` or `https://`
-3. Insecure (`http://`) URLs are rejected **unless**:
-   - `allow_insecure_custom` is `true`, **or**
-   - The host is loopback (`localhost`, `127.0.0.1`, `::1`)
-4. **SSRF protection:** Blocks private/restricted IP ranges:
-   - IPv4: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
-     `169.254.0.0/16`, `0.0.0.0/8`, non-`127.0.0.1` loopback
-   - IPv6: `fe80::/10`, `fc00::/7`, `fd00::/8`
-   - `*.localhost` domains (except bare `localhost`)
-5. Trailing dots on hostnames are stripped
-6. IPv6 bracket notation `[::1]` is unwrapped
+1. Must be a valid URL (`new URL()`).
+2. Protocol must be `http://` or `https://`.
+3. URL credentials (`user:pass@`) and URL fragments (`#`) are always rejected.
+4. Plain `http://` URLs are rejected unless `allow_insecure_custom` is `true` or the host is literal loopback (`localhost`, `127.0.0.1`, `::1`).
+   Setting `allow_insecure_custom: true` only relaxes the `https://` scheme requirement and never bypasses IP, hostname, credential, fragment, or redirect guards.
+5. **SSRF protection:** Blocks private, RFC 6890, and restricted IP ranges (including IPv4-mapped IPv6 literals), `.localhost` subdomains, and DNS lookups resolving to blocked or loopback addresses.
+6. **Connection-time IP pinning and redirect blocking:** `createSafeCustomFetch` validates hostnames via `resolveAndValidateHostname`, pins resolved IPs at connection time via `node:http`/`node:https` (`pinnedHttpTransport`), and rejects all HTTP redirects (`redirect: "manual"` and 3xx rejection).
 
-**Default URL:** `http://localhost:11434/v1` (Ollama default) when
-`custom_url` is unset.
+**Default URL:** `http://localhost:11434/v1` (Ollama default) when `custom_url` is unset.
 
 ---
 
@@ -395,16 +400,15 @@ The broker never suffix-matches model IDs.
   `ok: false`)
 
 #### `providers.ts`
-- `ProviderId` -- enum of all 23 supported providers
+- `ProviderId` -- enum of all 6 supported providers (`amazon-bedrock`, `anthropic`, `azure`, `custom`, `google-vertex`, `openrouter`)
 - `BrokerModelInfo` -- one executable row in the `models.list/1` output
   (`route_id`, `provider`, `provider_model_id`, `canonical_model_id?`,
   `display_name`, `context_window?`, `output_limit?`, `supports_reasoning?`,
   `supports_tools?`, `supports_structured_output?`)
 - `ProviderListEntry` -- `{ status: "catalog" | "passthrough", models:
   BrokerModelInfo[] }`
-- `CacheInfo` -- `{ status: "fresh" | "stale", fetched_at, expires_at }`
+- `CacheInfo` -- `{ status: "fresh" | "stale", fetched_at, expires_at, warning? }`
 - `ModelsListResponse` -- full `models.list/1` payload
-- `ModelsListError` -- `models.list.error/1` payload
 - `CatalogJson` / `ProviderCatalog` / `ProviderModelEntry` -- raw catalog
   shapes (validated via Zod)
 - `CacheMetadata` -- `models-cache/metadata.json` shape
@@ -422,27 +426,36 @@ The broker never suffix-matches model IDs.
 
 ### 4.9 `src/utils/` -- Utilities
 
-#### `src/utils.ts` -- Shared Utilities
+#### `helpers.ts` -- Shared Helpers
 
 - `getErrorMessage(err: unknown): string` -- extracts `.message` for Error
-  objects, `String(err)` otherwise. Used everywhere to safely convert
-  catch-clause values.
+  objects, `String(err)` otherwise.
+  Used everywhere to safely convert catch-clause values.
 - `estimateTokenCount(text: string): number` -- simple heuristic:
-  `ceil(text.length / 4)`. Used as a fallback when the provider doesn't
-  report token counts in usage metadata. Not intended to be precise.
+  `ceil(text.length / 4)`.
+  Used for embedded-file token budgets and fallback estimates.
+
+#### `prompts.ts` -- Prompt Builders
+
+- `buildConsensusPrompt()` and `buildSynthesisPrompt()` construct participant
+  and synthesis prompts.
+- `escapeEmbeddedFilesTag()` and `serializeSafeJson()` guard embedded file
+  boundaries and structured prompt inputs.
 
 #### `files.ts` -- File Embedding
 
-- `embedFiles(paths: string[]): Promise<EmbeddedFileResult>`
+- `embedFiles(paths: string[], options?: EmbedFilesOptions): Promise<EmbeddedFileResult>`
 - **Path allowlist:** Only files under these roots can be embedded:
-  - Current working directory
+  - Current working directory (rejects `/` and `$HOME` as implicit roots)
   - System temp directory (`os.tmpdir()`)
-- **Token budget:** 50 k tokens max (or 40% of model context window,
-  whichever is smaller). Files that would exceed the budget are skipped.
-- **Deduplication:** Duplicate paths are resolved via `new Set()`.
-- **Safety:** All paths are resolved with `realpath()` (symlinks followed,
-  canonicalised) before checking the allowlist.
-- Uses `Bun.file()` for reading -- Bun-native I/O.
+- **Sensitive-file denylist:** Rejects secrets, credential files, `.env`
+  variants (except safe templates), private keys, and sensitive `.git` entries.
+- **Size and content limits:** 1 MiB per-file byte cap, binary NUL-byte
+  rejection, and 50 k total token budget.
+  Files that exceed limits or fail checks are skipped.
+- **Deduplication and TOCTOU safety:** Duplicate paths are deduplicated, paths
+  are canonicalized with `realpath()`, and files are opened with
+  `O_NOFOLLOW | O_NONBLOCK`.
 
 #### `logger.ts` -- Structured Logging
 - Wraps [`@logtape/logtape`](https://jsr.io/@logtape/logtape) -- a
@@ -616,13 +629,15 @@ Releases are driven by GitHub Actions. A maintainer prepares a release commit wi
 | Command | Purpose |
 |---|---|
 | `bun run build` | Build `dist/cli.js` (Bun target, shebang `#!/usr/bin/env bun`) |
-| `bun run build:binary` | Compile to standalone binary (`consensus`) |
+| `bun run build:binary` | Compile 5 standalone platform binaries into `dist/` |
 | `bun run dev` | Run directly from source (`src/cli.ts`) |
-| `bun test tests/*.test.ts` | Run all tests |
-| `bun run lint` | Biome check (lint + format) |
-| `bun run format` | Biome format (auto-fix) |
-| `bun run format:check` | Biome format check (CI) |
-| `bun run changelog:update` | Generate CHANGELOG.md via git-cliff |
+| `bun run test` | Build `dist/cli.js` and run `bun test tests/*.test.ts --isolate` |
+| `bun run lint:check` | Biome check (`biome check .`) |
+| `bun run lint:fix` | Biome check with auto-fix (`biome check --write .`) |
+| `bun run format:check` | Biome format check (`biome format .`) |
+| `bun run format:fix` | Biome format with auto-fix (`biome format --write .`) |
+| `bun run prepack` | Runs `bun run build` before packing/publishing |
+| `bun run changelog:update` | Generate `CHANGELOG.md` via `git-cliff` (`.github/config/cliff.toml`) |
 
 **Prepack:** `bun run prepack` runs `bun run build` before `bun publish`.
 
@@ -649,15 +664,18 @@ Workflow file: `.github/workflows/release.yml`
 
 ## 11. External Dependencies
 
-| Package | Purpose |
-|---|---|
-| `ai` (`^7.0.0`) | Vercel AI SDK -- core `generateText` function |
-| `@ai-sdk/amazon-bedrock` | Amazon Bedrock provider |
-| `@ai-sdk/anthropic` | Anthropic provider |
-| `@ai-sdk/azure` | Azure provider |
-| `@ai-sdk/google-vertex` | Google Vertex AI provider |
-| `@ai-sdk/openai-compatible` | Custom OpenAI-compatible endpoints |
-| `@openrouter/ai-sdk-provider` | OpenRouter provider |
-| `zod` (`^4.3.6`) | Schema validation |
-| `@logtape/logtape` + `@logtape/file` | Structured logging + rotating file sink |
-| `@types/bun` + `@types/node` | TypeScript type definitions |
+| Package | Version | Purpose |
+|---|---|---|
+| `ai` | `^7.0.178` | Vercel AI SDK core `generateText` function |
+| `@ai-sdk/amazon-bedrock` | `^5.0.146` | Amazon Bedrock provider |
+| `@ai-sdk/anthropic` | `^4.0.107` | Anthropic provider |
+| `@ai-sdk/azure` | `^4.0.130` | Azure provider |
+| `@ai-sdk/google-vertex` | `^5.0.143` | Google Vertex AI provider |
+| `@ai-sdk/openai-compatible` | `^3.0.94` | Custom OpenAI-compatible endpoints |
+| `@openrouter/ai-sdk-provider` | `^3.1.0` | OpenRouter provider |
+| `minimist` | `^1.2.8` | CLI flag parsing |
+| `zod` | `^4.6.7` | Schema validation |
+| `@logtape/logtape` + `@logtape/file` | `^2.4.2` | Structured logging + rotating file sink |
+| `@biomejs/biome` (dev) | `2.6.8` | Linter and formatter |
+| `@types/bun` + `@types/node` + `@types/minimist` (dev) | `^1.4.5` / `26.1.1` / `^1.2.5` | TypeScript type definitions |
+| `typescript` (dev) | `^7.0.2` | TypeScript compiler |

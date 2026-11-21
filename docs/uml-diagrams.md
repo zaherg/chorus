@@ -85,6 +85,7 @@ classDiagram
         +string status
         +string fetched_at
         +string expires_at
+        +string warning
     }
 
     class BrokerModelInfo {
@@ -105,13 +106,19 @@ classDiagram
         +number provider_timeout_ms
         +LogLevel log_level
         +number max_concurrent_processes
-        +string openrouter_api_key
         +string anthropic_api_key
-        +string google_vertex_api_key
+        +string openrouter_api_key
         +string amazon_bedrock_api_key
+        +string amazon_bedrock_region
         +string azure_api_key
+        +string azure_resource_name
+        +string azure_base_url
+        +string google_vertex_api_key
+        +string google_vertex_project
+        +string google_vertex_location
         +string custom_api_key
         +string custom_url
+        +boolean allow_insecure_custom
     }
 
 
@@ -135,24 +142,6 @@ classDiagram
         +info(message, context) void
         +warn(message, context) void
         +error(message, context) void
-    }
-
-    class ConsensusCommandDeps {
-        +loadConfig() Promise~ChorusConfig~
-        +createProviderRegistry(config)
-        +runConsensus(request)
-        +configureLogging(level) Promise~void~
-        +stdin AsyncIterable
-        +stdout Writable
-        +stderr Writable
-    }
-
-    class ListModelsCommandDeps {
-        +loadConfig() Promise~ChorusConfig~
-        +createProviderRegistry(config)
-        +configureLogging(level) Promise~void~
-        +stdout Writable
-        +stderr Writable
     }
 
     class ProviderId {
@@ -220,12 +209,6 @@ classDiagram
     ProviderRegistry --> GenerateTextResult : returns
     ProviderRegistry --> Result~GenerateTextResult~ : generateText return
 
-    ConsensusCommandDeps --> ProviderRegistry : creates
-    ConsensusCommandDeps --> ChorusConfig : loads
-    ConsensusCommandDeps --> WrappedLogger : configures
-
-    ListModelsCommandDeps --> ProviderRegistry : creates
-    ListModelsCommandDeps --> ChorusConfig : loads
 ```
 
 ## Sequence Diagram: Consensus Run (parallel mode)
@@ -295,12 +278,13 @@ graph TD
     end
 
     subgraph "Commands"
-        CC[commands/consensus.ts<br/>runConsensusCommand<br/>parseModelKeyValueFlags]
-        LM[commands/list-models.ts<br/>runListModelsCommand]
+        CC[commands/consensus.ts<br/>runConsensusCommand<br/>parseConsensusArgs<br/>parseModelKeyValueFlags]
+        LM[commands/list-models.ts<br/>runListModelsCommand<br/>parseListModelsArgs]
+        BO[commands/boolean-options.ts<br/>validateKnownBooleanTokens]
     end
 
     subgraph "Core Engine"
-        CS[consensus.ts<br/>runConsensus<br/>queryModel<br/>buildPrompt<br/>runSettledWithConcurrency]
+        CS[consensus.ts<br/>runConsensus<br/>queryModel<br/>runSettledWithConcurrency]
     end
 
     subgraph "Configuration"
@@ -308,11 +292,12 @@ graph TD
     end
 
     subgraph "Provider System"
-        PR[registry.ts<br/>ProviderRegistry<br/>generateText<br/>createProviderFactory]
+        PR[registry.ts<br/>createProviderRegistry<br/>generateText<br/>isProviderConfigured]
         MC[model-catalog.ts<br/>loadCatalog<br/>models-cache]
-        PM[provider-map.ts<br/>getModelsDevProviderKey]
-        RR[resolve-route.ts<br/>resolveRoute<br/>ambiguity, passthrough]
-        CU[custom-url.ts<br/>validateCustomApiUrl]
+        FS[cache-fs.ts<br/>makeLocalFileReader<br/>makeLocalFileWriter]
+        PM[provider-map.ts<br/>getModelsDevProviderKey<br/>isCatalogBackedProvider]
+        RR[resolve-route.ts<br/>resolveRoute<br/>parseRouteId]
+        CU[custom-url.ts<br/>validateCustomApiUrl<br/>resolveAndValidateHostname<br/>createSafeCustomFetch]
     end
 
     subgraph "External APIs"
@@ -326,10 +311,10 @@ graph TD
     end
 
     subgraph "Utilities"
-        LG[logger.ts<br/>configureLogging<br/>redactSecrets]
-        FL[files.ts<br/>embedFiles]
-        TK[tokens.ts<br/>estimateTokenCount]
-        ER[errors.ts<br/>getErrorMessage]
+        LG[utils/logger.ts<br/>configureLogging<br/>redactSecrets]
+        FL[utils/files.ts<br/>embedFiles]
+        HP[utils/helpers.ts<br/>getErrorMessage<br/>estimateTokenCount]
+        UP[utils/prompts.ts<br/>buildConsensusPrompt<br/>buildSynthesisPrompt]
     end
 
     subgraph "Types"
@@ -339,35 +324,41 @@ graph TD
     end
 
     subgraph "Prompts"
-        PM[prompts/consensus.ts<br/>CONSENSUS_SYSTEM_PROMPT]
+        PC[prompts/consensus.ts<br/>CONSENSUS_SYSTEM_PROMPT]
     end
 
-    CLI --> CF
     CLI --> CC
     CLI --> LM
 
+    CC --> BO
     CC --> CF
     CC --> PR
     CC --> CS
     CC --> LG
+    CC --> MC
+    CC --> FS
+    CC --> RR
+    CC --> HP
 
+    LM --> BO
     LM --> CF
     LM --> PR
     LM --> LG
+    LM --> MC
+    LM --> FS
+    LM --> HP
 
     CS --> PR
     CS --> RR
     CS --> FL
-    CS --> PM
-
-    CC --> MC
-    CC --> RR
-    LM --> MC
-    LM --> PM
+    CS --> UP
+    CS --> PC
 
     PR --> CU
     PR --> PM
     PR --> AI
+
+    MC --> PM
 
     AI --> P1
     AI --> P2
@@ -376,7 +367,7 @@ graph TD
     AI --> P5
     AI --> P6
 
-    FL --> TK
+    FL --> HP
 
     CC --> TP
     PR --> TP

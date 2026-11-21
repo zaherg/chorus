@@ -1,32 +1,41 @@
 ---
 name: delegate
-description: Use only when the user explicitly asks to shell out to external CLI coding agents such as Claude Code, Codex, OpenCode, GitHub Copilot, or Pi Coding Agent for focused sub-tasks or parallel independent work.
+description: Use only when the user explicitly asks to shell out to external CLI coding agents such as Claude Code, Codex, OpenCode, GitHub Copilot, or Pi Coding Agent for focused sub-tasks or parallel independent work. Do not use for multi-model comparison or debate (use consensus instead).
 disable-model-invocation: true
 ---
 
 # Delegate
 
-## When to Use
+## Activation and Guardrails
 
-Delegate tasks to specialized CLI agents (Claude Code, Codex, OpenCode, GitHub Copilot, Pi Coding Agent) when you need:
-- A fresh context window for a complex sub-task
-- A different agent's perspective on a problem
-- Parallel execution of independent tasks
-- Code changes by a coding-focused agent
+Use this skill only when the user explicitly asks to delegate work to a named external CLI coding agent (Claude Code, Codex, OpenCode, GitHub Copilot, or Pi Coding Agent).
+Do not use this skill for multi-model comparison, independent evaluation, or structured debate.
+For multi-model debate, use `consensus` when `consensus` is available on `PATH`, or `bin/consensus` from an installed consensus skill folder after running `scripts/install.sh`.
 
 <critical>
 - Do not invoke this skill automatically.
 - Invoke only when the user explicitly requests external CLI delegation.
-- Never try another agent if the one the user asked for didn't work or sidetracked.
+- Never try another agent if the one the user asked for did not work or sidetracked.
 </critical>
 
-Skills has no built-in delegate command. Instead, shell out to the CLI agents directly.
+Chorus has no built-in delegate command.
+Instead, shell out to the requested CLI agent directly.
 
-For structured multi-model debate, use `consensus` when `consensus` is available on `PATH`, or `bin/consensus` from an installed consensus skill folder after running `scripts/install.sh`.
+### Preflight and Postflight Safety Rules
+
+Apply these checks across every delegated CLI agent:
+
+1. Verify the requested binary is installed before invoking it by running `command -v <agent>`.
+2. Never pass secrets, API keys, or credentials in prompts, CLI flags, environment dumps, or log files.
+3. Choose explicit read-only versus file-mutating flags that match the user's authorization, and check `<agent> --help` before passing flags you have not verified on the installed version.
+4. After every delegated run inside a repository, inspect the worktree with `git status` and `git diff` and report the exit status and any changed files.
 
 ## How to Delegate
 
 ### Claude Code
+
+Check `claude --help` to confirm supported non-interactive, model, and permission flags on the installed binary.
+When the user requests a specific model, supply it through a variable rather than hardcoding stale model identifiers.
 
 With a specific prompt:
 
@@ -34,40 +43,45 @@ With a specific prompt:
 claude --print "Refactor the authentication module to use async/await instead of callbacks. Files: src/auth.ts, src/auth_test.ts"
 ```
 
-With a specific prompt and a model:
+With a user-supplied or live-discovered model (replace `CLAUDE_MODEL` with a current model ID confirmed via `claude --help` or live discovery):
 
 ```bash
-claude --print "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts" --model claude-sonnet-4-20250514
+: "${CLAUDE_MODEL:?Set CLAUDE_MODEL to a live model ID supported by claude}"
+
+claude --print \
+  --model "$CLAUDE_MODEL" \
+  "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts. Do not modify files."
 ```
 
 ### Codex (OpenAI)
 
+Check `codex --help` and `codex review --help` to verify supported flags, sandbox modes, and model options on the installed version.
+Use `codex exec` for non-interactive task execution rather than interactive `codex`.
+
 With a specific prompt:
 
 ```bash
-codex exec "Generate unit tests for src/utils/tokens.ts covering edge cases: empty strings, unicode, very long inputs"
+codex exec "Generate unit tests for src/utils/files.ts covering edge cases: empty strings, unicode, very long inputs"
 ```
 
-To review a specific feature or issues:
+To review a specific feature or issue:
 
 ```bash
 codex review "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts"
 ```
 
-With a specific model and low reasoning effort:
-
-
-```bash
-codex review "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts" -m gpt-5.6-luna -c model_reasoning_effort=low
-```
-
-With a specific model and high reasoning effort:
-
+With a user-supplied or live-discovered model and explicit reasoning effort (do not invent model IDs; confirm supported models and `-c` keys with `codex --help`):
 
 ```bash
-codex review "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts" -m gpt-5.6-luna -c model_reasoning_effort=high
+: "${CODEX_MODEL:?Set CODEX_MODEL to a live model ID supported by codex}"
+
+codex review \
+  -m "$CODEX_MODEL" \
+  -c model_reasoning_effort=low \
+  "Review this pull request for security issues. Focus on: SQL injection, XSS, CSRF. Files: src/api/handlers.ts"
 ```
 
+For higher reasoning effort, set `-c model_reasoning_effort=high` with the same verified `CODEX_MODEL`.
 
 ### Pi Coding Agent
 
@@ -77,7 +91,7 @@ Run Pi from the root of the project that owns the delegated task.
 The command examples in this section use POSIX shell syntax, including variable guards and line continuations, and are written for the macOS and zsh environment of this repository.
 They do not claim native PowerShell compatibility.
 
-Make sure to use an equivalent commands that matches the user operating system.
+Make sure to use equivalent commands that match the user's operating system.
 
 Model selection follows this exact precedence:
 
@@ -223,45 +237,80 @@ Retry or substitute only after explicit user authorization.
 
 ### OpenCode
 
+Check `opencode --help` to verify available model and permission flags on the installed binary.
+
 ```bash
-opencode run "Analyze the error handling patterns in src/providers/ and suggest improvements"
+opencode run "Analyze the error handling patterns in src/providers/ and suggest improvements. Do not modify files."
 ```
 
 ### GitHub Copilot CLI
 
+Check `copilot --help` to confirm non-interactive prompt and permission flags on the installed binary.
+Use `-p` for non-interactive execution:
+
 ```bash
-copilot "Explain the consensus algorithm in src/consensus.ts and identify potential race conditions"
+copilot -p "Explain the consensus algorithm in src/consensus.ts and identify potential race conditions"
 ```
 
 ## Patterns
 
 ### Parallel delegation (independent tasks)
 
+Parallel runs must either be read-only or target strictly disjoint files so concurrent agents do not overwrite each other's changes.
+Isolate logs in a temporary directory created with `mktemp -d`, clean it up with a `trap`, and capture each child process exit code individually with `wait`:
+
 ```bash
-claude --print "Write tests for src/config.ts" > /tmp/config-tests.log 2>&1 &
-claude --print "Write tests for src/consensus.ts" > /tmp/consensus-tests.log 2>&1 &
-wait
-cat /tmp/config-tests.log
-cat /tmp/consensus-tests.log
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+claude --print "Write tests for src/config.ts only. Do not modify other files." > "$TMP_DIR/config-tests.log" 2>&1 &
+PID_A=$!
+claude --print "Write tests for src/consensus.ts only. Do not modify other files." > "$TMP_DIR/consensus-tests.log" 2>&1 &
+PID_B=$!
+
+STATUS_A=0
+wait "$PID_A" || STATUS_A=$?
+STATUS_B=0
+wait "$PID_B" || STATUS_B=$?
+
+cat "$TMP_DIR/config-tests.log"
+cat "$TMP_DIR/consensus-tests.log"
+echo "Exit codes: config=$STATUS_A consensus=$STATUS_B"
 ```
 
 ### Delegate + consensus (get agent output, then run consensus)
 
-```bash
-# Get code review from codex
-REVIEW=$(codex "Review src/consensus.ts for correctness and edge cases")
+This pipeline requires `jq` on `PATH`.
+Discover live consensus routes first, run `codex exec` non-interactively while checking its exit status, and stream the review text through stdin to `jq -Rs` instead of `--arg` so large outputs are never exposed in process arguments or truncated by `ARG_MAX`:
 
-# Run consensus on the review
-consensus \
-  --models "gpt-5.2,gemini-2.5-pro" \
-  --prompt "Evaluate this code review: $REVIEW" \
-  --stance "gpt-5.2=for" \
-  --stance "gemini-2.5-pro=against"
+```bash
+# Discover live routes first and replace the illustrative placeholders below:
+consensus list-models --json
+ROUTE_A="provider-a/model-a"
+ROUTE_B="provider-b/model-b"
+
+# Collect a non-interactive code review from Codex and fail fast on non-zero exit:
+REVIEW="$(codex exec "Review src/consensus.ts for correctness and edge cases. Do not modify files.")" || {
+  echo "codex exec failed" >&2
+  exit 1
+}
+
+# Stream $REVIEW via stdin to jq -Rs and pipe the strict request into consensus --stdin-json:
+printf '%s' "$REVIEW" | jq -Rs \
+  --arg route_a "$ROUTE_A" \
+  --arg route_b "$ROUTE_B" \
+  '{
+    models: [$route_a, $route_b],
+    prompt: "Evaluate this code review for accuracy and missed edge cases.",
+    findings: .,
+    stances: { ($route_a): "for", ($route_b): "against" }
+  }' | consensus --stdin-json
 ```
 
 ### Working directory
 
-Most CLI agents operate in the current directory. Use `cd` or the agent's working directory flag:
+Most CLI agents operate in the current working directory.
+Run from the target project root using `cd` or the agent's working directory flag:
 
 ```bash
 cd /path/to/project && claude --print "Run the test suite and fix any failures"
@@ -269,6 +318,6 @@ cd /path/to/project && claude --print "Run the test suite and fix any failures"
 
 ## Notes
 
-- Each CLI agent (including Pi Coding Agent) must be installed separately and available on PATH.
-- Skills does not manage or install these agents.
+- Each CLI agent (including Pi Coding Agent) must be installed separately and available on `PATH`.
+- Chorus does not manage or install these agents.
 - For structured multi-model debate, use `consensus` instead of manual delegation.
