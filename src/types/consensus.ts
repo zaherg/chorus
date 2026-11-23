@@ -1,7 +1,7 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 
 import type { ProviderRegistry, ThinkingMode } from "@/providers/registry";
-import type { EmbeddedFileResult } from "@/types/files";
+import { type EmbeddedFileResult, EmbeddedFileResultSchema } from "@/types/files";
 import { type ModelsListResponse, type ProviderId, ProviderIdSchema } from "@/types/providers";
 
 // === Consensus primitives ===
@@ -56,15 +56,11 @@ export const ParticipantErrorSchema = z.object({
     retryable: z.boolean(),
 });
 
-export interface ParticipantError {
-    code: "provider_request_failed" | "synthesis_model_unresolved";
-    message: string;
-    retryable: boolean;
-}
+export type ParticipantError = z.infer<typeof ParticipantErrorSchema>;
 
 export const SynthesisErrorSchema = ParticipantErrorSchema;
 
-export type SynthesisError = ParticipantError;
+export type SynthesisError = z.infer<typeof SynthesisErrorSchema>;
 
 export const ParticipantProviderSchema = z.union([ProviderIdSchema, z.literal("unknown")]);
 
@@ -85,20 +81,7 @@ export const ParticipantResponseSchema = z.object({
  * - `error` is `null` for successful calls; otherwise it carries the structured
  *   failure (and `response` is `null`).
  */
-export interface ParticipantResponse {
-    /** Executable route ID (e.g. `"openrouter/openai/gpt-5.2"`). */
-    route_id: string;
-    /** Internal provider ID (e.g. `"openrouter"`), or `"unknown"` when unresolved. */
-    provider: ProviderId | "unknown";
-    /** Provider-native model ID passed to the AI SDK provider. */
-    provider_model_id: string;
-    /** Raw text response from the model, or `null` when the call failed. */
-    response: string | null;
-    /** Assigned stance for the participant, or `null` when no stance was assigned or the call failed. */
-    stance: Stance | null;
-    /** Structured error from the participant call, or `null` on success. */
-    error: ParticipantError | null;
-}
+export type ParticipantResponse = z.infer<typeof ParticipantResponseSchema>;
 
 // === Consensus request (input) ===
 
@@ -146,54 +129,9 @@ export interface ConsensusRequest {
     modelContextWindow?: number;
 }
 
-// === Consensus result (output) ===
+// === CLI wire output schemas & results ===
 
-/**
- * Successful broker response. The broker returns this when at least one
- * participant call completed. Failed participant calls are still included in
- * `models` with `response: null` and a structured `error`. `synthesis` is
- * populated only when `ConsensusRequest.synthesisModel` is set and the
- * synthesis call succeeded; `synthesis_error` explains failures.
- */
-export interface ConsensusResult {
-    /** Discriminant -- always `true` for a successful broker response. */
-    ok: true;
-    /** JSON Schema identifier for this payload (`"cli.consensus/2"`). */
-    schema: "cli.consensus/2";
-    /**
-     * One entry per requested model. Failed participants keep their
-     * `route_id`/`provider`/`provider_model_id` and carry `response: null`
-     * plus a structured `error`.
-     */
-    models: ParticipantResponse[];
-    /** Synthesized text, or `null` when synthesis was not requested or failed. */
-    synthesis: string | null;
-    /** Structured synthesis error, or `null` when synthesis succeeded or was not requested. */
-    synthesis_error: ParticipantError | null;
-    /** Result of embedding referenced files into prompts. */
-    embeddedFiles: EmbeddedFileResult;
-}
-
-/**
- * Failed broker response. The broker returns this only when no participant
- * call completed; partial-success runs return a `ConsensusResult` with the
- * successful rows and structured per-row errors.
- */
-export interface ConsensusError {
-    /** Discriminant -- always `false` for a failure result. */
-    ok: false;
-    /** Array of error message strings. Non-empty; one entry per failure. */
-    errors: string[];
-}
-
-// === CLI wire output schemas ===
-
-export const EmbeddedFilesResultSchema = z.object({
-    embedded_files: z.array(z.string()),
-    embedded_text: z.string(),
-    skipped_files: z.array(z.string()),
-    total_tokens: z.number(),
-});
+export const EmbeddedFilesResultSchema = EmbeddedFileResultSchema;
 
 export type EmbeddedFilesResult = EmbeddedFileResult;
 
@@ -206,7 +144,28 @@ export const CliConsensusResponseSchema = z.object({
     embeddedFiles: EmbeddedFilesResultSchema,
 });
 
+/**
+ * Successful broker response (`cli.consensus/2`). The broker returns this when
+ * at least one participant call completed. Failed participant calls remain in
+ * `models` with `response: null` and a structured `error`. `synthesis` is
+ * populated only when `ConsensusRequest.synthesisModel` is set and the
+ * synthesis call succeeded; `synthesis_error` explains failures.
+ */
+export type ConsensusResult = z.infer<typeof CliConsensusResponseSchema>;
+
 export type CliConsensusResponse = ConsensusResult;
+
+/**
+ * Failed broker response. The broker returns this only when no participant
+ * call completed; partial-success runs return a `ConsensusResult` with the
+ * successful rows and structured per-row errors.
+ */
+export interface ConsensusError {
+    /** Discriminant: always `false` for a failure result. */
+    ok: false;
+    /** Array of error message strings. Non-empty; one entry per failure. */
+    errors: string[];
+}
 
 export const cliConsensusErrorCodeValues = [
     "ambiguous_model",
@@ -232,16 +191,7 @@ export const CliConsensusErrorSchema = z.object({
     error: CliConsensusErrorDetailSchema,
 });
 
-export interface CliConsensusError {
-    ok: false;
-    schema: "cli.consensus.error/1";
-    error: {
-        code: CliConsensusErrorCode;
-        message: string;
-        input?: string;
-        candidates?: string[];
-    };
-}
+export type CliConsensusError = z.infer<typeof CliConsensusErrorSchema>;
 
 export const CliConsensusOutputSchema = z.union([CliConsensusResponseSchema, CliConsensusErrorSchema]);
 

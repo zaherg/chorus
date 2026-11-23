@@ -15,7 +15,10 @@ import {
 } from "@/providers/registry";
 import { classifyInput, type ResolveRouteOptions, resolveRoute } from "@/providers/resolve-route";
 import {
+    type CliConsensusError,
+    type CliConsensusErrorCode,
     CliConsensusOutputSchema,
+    type CliConsensusResponse,
     type ParticipantError,
     type Stance,
     StanceSchema,
@@ -351,11 +354,15 @@ const normalizeModelOptionMap = <T>(
     return { ok: true, value: normalized };
 };
 
-const printError = (payload: object) => {
+const printError = (payload: CliConsensusError) => {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 };
 
-const brokerError = (code: string, message: string, extra?: object) => {
+const brokerError = (
+    code: CliConsensusErrorCode,
+    message: string,
+    extra?: Pick<CliConsensusError["error"], "input" | "candidates">,
+) => {
     printError({
         ok: false,
         schema: "cli.consensus.error/1",
@@ -751,7 +758,7 @@ export const runConsensusCommand = async (args: string[]) => {
         return 1;
     }
 
-    const output = unresolvedSynthesisError
+    const output: CliConsensusResponse = unresolvedSynthesisError
         ? {
               ...result,
               synthesis: null,

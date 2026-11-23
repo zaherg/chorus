@@ -1,11 +1,28 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
-import { z } from "zod";
+import { z } from "zod/v4";
 
 import { runConsensus } from "@/consensus";
 import { CONSENSUS_SYSTEM_PROMPT } from "@/prompts/consensus";
 import type { ProviderRegistry } from "@/providers/registry";
-import { CliConsensusOutputSchema } from "@/types/consensus";
+import {
+    type CliConsensusError,
+    type CliConsensusErrorSchema,
+    CliConsensusOutputSchema,
+    type CliConsensusResponse,
+    type CliConsensusResponseSchema,
+    type ConsensusResult,
+    EmbeddedFilesResultSchema,
+    type ParticipantError,
+    type ParticipantErrorSchema,
+    type ParticipantResponse,
+    type ParticipantResponseSchema,
+    type SynthesisError,
+    type SynthesisErrorSchema,
+} from "@/types/consensus";
+import * as fileTypes from "@/types/files";
 import type { BrokerModelInfo, ModelsListResponse, ProviderId } from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
 import { logger } from "@/utils/logger";
@@ -772,5 +789,42 @@ describe("prompt safety and consensus output schemas", () => {
             },
         });
         expect(errParsed.ok).toBe(false);
+    });
+
+    it("single-sources wire schemas with zod/v4 and keeps TS wire types identical to z.infer", () => {
+        // Compile-time exact-equality assertions prevent hand-written interface drift.
+        type AssertExact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+        const _assertions: [
+            AssertExact<ParticipantError, z.infer<typeof ParticipantErrorSchema>>,
+            AssertExact<SynthesisError, z.infer<typeof SynthesisErrorSchema>>,
+            AssertExact<ParticipantResponse, z.infer<typeof ParticipantResponseSchema>>,
+            AssertExact<ConsensusResult, z.infer<typeof CliConsensusResponseSchema>>,
+            AssertExact<CliConsensusResponse, z.infer<typeof CliConsensusResponseSchema>>,
+            AssertExact<CliConsensusError, z.infer<typeof CliConsensusErrorSchema>>,
+            AssertExact<fileTypes.EmbeddedFileResult, z.infer<typeof EmbeddedFilesResultSchema>>,
+        ] = [true, true, true, true, true, true, true];
+        expect(_assertions.every(Boolean)).toBe(true);
+
+        // EmbeddedFilesResultSchema must reuse the canonical schema from src/types/files.ts.
+        expect(EmbeddedFilesResultSchema).toBe(fileTypes.EmbeddedFileResultSchema);
+
+        // Every Zod import across src/ and tests/ must use "zod/v4".
+        const collectTsFiles = (dir: string): string[] => {
+            const results: string[] = [];
+            for (const entry of readdirSync(dir, { withFileTypes: true })) {
+                const fullPath = join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    results.push(...collectTsFiles(fullPath));
+                } else if (entry.name.endsWith(".ts")) {
+                    results.push(fullPath);
+                }
+            }
+            return results;
+        };
+        const root = resolve(import.meta.dir, "..");
+        const bareZodImporters = [...collectTsFiles(join(root, "src")), ...collectTsFiles(join(root, "tests"))].filter(
+            (filePath) => /from\s+["']zod["']/.test(readFileSync(filePath, "utf-8")),
+        );
+        expect(bareZodImporters).toEqual([]);
     });
 });

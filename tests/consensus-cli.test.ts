@@ -13,6 +13,7 @@ import * as actualConsensusModule from "@/consensus";
 import * as actualModelCatalogModule from "@/providers/model-catalog";
 import * as actualRegistryModule from "@/providers/registry";
 import * as actualResolveRouteModule from "@/providers/resolve-route";
+import { CliConsensusOutputSchema } from "@/types/consensus";
 import {
     BrokerModelInfoSchema,
     type ModelsListResponse,
@@ -2133,6 +2134,112 @@ describe("runConsensusCommand", () => {
         );
         expect(supported.result).toBe(0);
         expect(supported.stderr).toBe("");
+    });
+
+    it("emits stdout JSON conforming to CliConsensusOutputSchema across success and error codes", async () => {
+        // 1. Success response (cli.consensus/2)
+        stubDefaults();
+        const okRun = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5",
+                "--prompt",
+                "verify schema",
+            ]),
+        );
+        expect(okRun.result).toBe(0);
+        const parsedOk = CliConsensusOutputSchema.parse(JSON.parse(okRun.stdout));
+        expect(parsedOk.ok).toBe(true);
+        expect(parsedOk.schema).toBe("cli.consensus/2");
+
+        // 2. Unresolved synthesis still conforms to cli.consensus/2
+        stubDefaults();
+        const unresolvedSynth = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5",
+                "--prompt",
+                "verify schema",
+                "--synthesis-model",
+                "openrouter/nonexistent-model",
+            ]),
+        );
+        expect(unresolvedSynth.result).toBe(0);
+        const parsedUnresolved = CliConsensusOutputSchema.parse(JSON.parse(unresolvedSynth.stdout));
+        expect(parsedUnresolved.ok).toBe(true);
+        if (parsedUnresolved.ok) {
+            expect(parsedUnresolved.synthesis_error?.code).toBe("synthesis_model_unresolved");
+        }
+
+        // 3. Unknown model error (cli.consensus.error/1)
+        stubDefaults();
+        const unknownRun = await captureOutput(() =>
+            runConsensusCommand(["--models", "openrouter/openai/gpt-5.2,no-such-model", "--prompt", "verify schema"]),
+        );
+        expect(unknownRun.result).toBe(3);
+        const parsedUnknown = CliConsensusOutputSchema.parse(JSON.parse(unknownRun.stdout));
+        expect(parsedUnknown.ok).toBe(false);
+        if (!parsedUnknown.ok) {
+            expect(parsedUnknown.error.code).toBe("unknown_model");
+        }
+
+        // 4. Broker error when all participants fail (cli.consensus.error/1)
+        stubDefaults();
+        stubRunConsensus(async () => ({ ok: false, errors: ["all models failed"] }));
+        const brokerFail = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5",
+                "--prompt",
+                "verify schema",
+            ]),
+        );
+        expect(brokerFail.result).toBe(1);
+        const parsedBrokerFail = CliConsensusOutputSchema.parse(JSON.parse(brokerFail.stdout));
+        expect(parsedBrokerFail.ok).toBe(false);
+        if (!parsedBrokerFail.ok) {
+            expect(parsedBrokerFail.error.code).toBe("broker_error");
+        }
+
+        // 5. Ambiguous model error (cli.consensus.error/1)
+        stubDefaults();
+        stubRouteResolver(() => ({
+            ok: false as const,
+            error: {
+                code: "ambiguous_model" as const,
+                input: "shared",
+                candidates: ["anthropic/shared", "openrouter/shared"],
+                message: "Model 'shared' is exposed by multiple configured providers.",
+            },
+        }));
+        const ambiguousRun = await captureOutput(() =>
+            runConsensusCommand(["--models", "shared,openrouter/openai/gpt-5.2", "--prompt", "verify schema"]),
+        );
+        expect(ambiguousRun.result).toBe(3);
+        const parsedAmbiguous = CliConsensusOutputSchema.parse(JSON.parse(ambiguousRun.stdout));
+        expect(parsedAmbiguous.ok).toBe(false);
+        if (!parsedAmbiguous.ok) {
+            expect(parsedAmbiguous.error.code).toBe("ambiguous_model");
+            expect(parsedAmbiguous.error.candidates).toEqual(["anthropic/shared", "openrouter/shared"]);
+        }
+
+        // 6. Catalog unavailable error (cli.consensus.error/1)
+        stubDefaults();
+        stubCatalogUnavailable("models.dev unreachable");
+        const catalogFail = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,anthropic/claude-sonnet-4-5",
+                "--prompt",
+                "verify schema",
+            ]),
+        );
+        expect(catalogFail.result).toBe(1);
+        const parsedCatalogFail = CliConsensusOutputSchema.parse(JSON.parse(catalogFail.stdout));
+        expect(parsedCatalogFail.ok).toBe(false);
+        if (!parsedCatalogFail.ok) {
+            expect(parsedCatalogFail.error.code).toBe("catalog_unavailable");
+        }
     });
 });
 
