@@ -1,6 +1,3 @@
-import minimist from "minimist";
-import { z } from "zod/v4";
-
 import { getConfigPaths, loadConfig } from "@/config";
 import { makeLocalFileReader, makeLocalFileWriter } from "@/providers/cache-fs";
 import { loadCatalog } from "@/providers/model-catalog";
@@ -16,20 +13,9 @@ import {
 import type { Result, ToolError } from "@/types/tools";
 import { getErrorMessage } from "@/utils/helpers";
 import { configureLogging } from "@/utils/logger";
-import { validateKnownBooleanTokens } from "./boolean-options";
+import { parseCliOptions } from "./cli-options";
 
-const LIST_MODELS_BOOLEAN_OPTIONS = ["json", "refresh", "help", "h"] as const;
-
-const ListModelsMinimistSchema = z
-    .object({
-        _: z.array(z.string()),
-        "--": z.array(z.string()),
-        json: z.boolean(),
-        refresh: z.boolean(),
-        help: z.boolean(),
-        h: z.boolean(),
-    })
-    .strict();
+const LIST_MODELS_BOOLEAN_OPTIONS = ["json", "refresh", "help"] as const;
 
 export type ParsedListModelsArgs = {
     refresh: boolean;
@@ -50,51 +36,31 @@ const listModelsArgumentError = (message: string, details?: unknown): { ok: fals
 
 /** Parses list-models command arguments without performing command execution. */
 export const parseListModelsArgs = (args: string[]): Result<ParsedListModelsArgs, ToolError> => {
-    const booleanSyntax = validateKnownBooleanTokens(args, LIST_MODELS_BOOLEAN_OPTIONS);
-    if (!booleanSyntax.ok) {
-        return listModelsArgumentError(`Unknown flag: ${booleanSyntax.token}`, { option: booleanSyntax.option });
-    }
-
-    const unknownOptions: string[] = [];
-    const raw: unknown = minimist(args, {
-        string: ["_"],
-        boolean: [...LIST_MODELS_BOOLEAN_OPTIONS],
-        alias: { help: "h" },
-        "--": true,
-        unknown: (token: string) => {
-            if (token === "-" || !token.startsWith("-")) {
-                return true;
-            }
-            unknownOptions.push(token);
-            return false;
-        },
+    const parsed = parseCliOptions(args, {
+        booleans: LIST_MODELS_BOOLEAN_OPTIONS,
+        shortAliases: { h: "help" },
     });
-    const rawValidation = ListModelsMinimistSchema.safeParse(raw);
-    if (!rawValidation.success) {
-        return listModelsArgumentError("Invalid arguments", rawValidation.error.issues);
-    }
-    if (unknownOptions.length > 0) {
-        return listModelsArgumentError(`Unknown flag: ${unknownOptions[0]}`);
+    if (!parsed.ok) {
+        if (parsed.kind === "separator") {
+            return listModelsArgumentError("Unknown flag: --");
+        }
+        return listModelsArgumentError(`Unknown flag: ${parsed.token}`, { option: parsed.option });
     }
 
-    const parsed = rawValidation.data;
-    if (booleanSyntax.separatorPresent || parsed["--"].length > 0) {
-        return listModelsArgumentError("Unknown flag: --");
+    if (parsed.positionals.length > 1) {
+        return listModelsArgumentError(`Unknown flag: ${parsed.positionals[1]}`);
     }
-    if (parsed._.length > 1) {
-        return listModelsArgumentError(`Unknown flag: ${parsed._[1]}`);
-    }
-    if (parsed._[0] === "-") {
+    if (parsed.positionals[0] === "-") {
         return listModelsArgumentError("Unknown flag: -");
     }
 
     return {
         ok: true,
         value: {
-            refresh: parsed.refresh,
-            json: parsed.json,
-            help: parsed.help,
-            filter: parsed._[0],
+            refresh: parsed.booleans.refresh,
+            json: parsed.booleans.json,
+            help: parsed.booleans.help,
+            filter: parsed.positionals[0],
         },
     };
 };

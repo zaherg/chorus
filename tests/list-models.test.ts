@@ -165,9 +165,6 @@ describe("parseListModelsArgs", () => {
             refresh: false,
         });
         expectSuccess(["-h"], { filter: undefined, help: true, json: false, refresh: false });
-        expectSuccess(["--h=true"], { filter: undefined, help: true, json: false, refresh: false });
-        expectSuccess(["--h=false"], { filter: undefined, help: false, json: false, refresh: false });
-        expectSuccess(["--no-h"], { filter: undefined, help: false, json: false, refresh: false });
     });
 
     it("uses the last known boolean value", () => {
@@ -201,7 +198,11 @@ describe("parseListModelsArgs", () => {
         expectFailure(["--refresh=invalid"], "Unknown flag: --refresh=invalid");
         expectFailure(["--json=1"], "Unknown flag: --json=1");
         expectFailure(["--help=yes"], "Unknown flag: --help=yes");
+        expectFailure(["--h"], "Unknown flag: --h");
+        expectFailure(["--h=true"], "Unknown flag: --h=true");
+        expectFailure(["--h=false"], "Unknown flag: --h=false");
         expectFailure(["--h=0"], "Unknown flag: --h=0");
+        expectFailure(["--no-h"], "Unknown flag: --no-h");
         expectFailure(["--no-refresh=false"], "Unknown flag: --no-refresh=false");
         expectFailure(["--no-json=true"], "Unknown flag: --no-json=true");
         expectFailure(["--no-help=false"], "Unknown flag: --no-help=false");

@@ -363,6 +363,7 @@ describe("parseConsensusArgs", () => {
                 "a.ts,b.ts",
             ]),
         ).toEqual({
+            mode: "flags",
             models: "model-a,model-b",
             prompt: "prompt",
             temperature: "0.25",
@@ -372,9 +373,6 @@ describe("parseConsensusArgs", () => {
             thinkingMode: [],
             temperatureModel: [],
             sequential: false,
-            stdinJson: false,
-            schema: false,
-            help: false,
         });
     });
 
@@ -388,6 +386,7 @@ describe("parseConsensusArgs", () => {
                 "--files=a.ts,b.ts",
             ]),
         ).toEqual({
+            mode: "flags",
             models: "model-a,model-b",
             prompt: "prompt",
             temperature: "0.25",
@@ -397,14 +396,14 @@ describe("parseConsensusArgs", () => {
             thinkingMode: [],
             temperatureModel: [],
             sequential: false,
-            stdinJson: false,
-            schema: false,
-            help: false,
         });
     });
 
     it("normalizes one and repeated options to ordered arrays", () => {
-        expect(parseSuccess(["--stance", "model-a=for"]).stance).toEqual(["model-a=for"]);
+        expect(parseSuccess(["--stance", "model-a=for"])).toMatchObject({
+            mode: "flags",
+            stance: ["model-a=for"],
+        });
         expect(
             parseSuccess([
                 "--stance=model-a=for",
@@ -418,6 +417,7 @@ describe("parseConsensusArgs", () => {
                 "model-b=0.75",
             ]),
         ).toMatchObject({
+            mode: "flags",
             stance: ["model-a=for", "model-b=against"],
             thinkingMode: ["model-a=high", "model-b=low"],
             temperatureModel: ["model-a=0.25", "model-b=0.75"],
@@ -426,20 +426,32 @@ describe("parseConsensusArgs", () => {
 
     it("parses standard true, false, and negated boolean forms", () => {
         expect(parseSuccess(["--sequential=true", "--stdin-json=false", "--no-schema"])).toMatchObject({
+            mode: "flags",
             sequential: true,
-            stdinJson: false,
-            schema: false,
+        });
+        expect(parseSuccess(["--schema"])).toEqual({ mode: "schema" });
+        expect(parseSuccess(["--stdin-json", "--sequential"])).toEqual({ mode: "stdin-json", sequential: true });
+    });
+
+    it("uses last-value behavior for repeated and contradictory booleans", () => {
+        expect(parseSuccess(["--sequential", "--no-sequential", "--sequential=false"])).toMatchObject({
+            mode: "flags",
+            sequential: false,
+        });
+        expect(parseSuccess(["--stdin-json", "--no-stdin-json", "--stdin-json=false"])).toMatchObject({
+            mode: "flags",
+        });
+        expect(parseSuccess(["--stdin-json=false", "--no-stdin-json", "--stdin-json"])).toEqual({
+            mode: "stdin-json",
+            sequential: false,
         });
     });
 
-    it("uses minimist last-value behavior for repeated and contradictory booleans", () => {
-        expect(parseSuccess(["--sequential", "--no-sequential", "--sequential=false"]).sequential).toBe(false);
-        expect(parseSuccess(["--stdin-json", "--no-stdin-json", "--stdin-json=false"]).stdinJson).toBe(false);
-        expect(parseSuccess(["--stdin-json=false", "--no-stdin-json", "--stdin-json"]).stdinJson).toBe(true);
-    });
-
     it("keeps numeric-looking temperature values as strings", () => {
-        expect(parseSuccess(["--temperature=0.25"]).temperature).toBe("0.25");
+        expect(parseSuccess(["--temperature=0.25"])).toMatchObject({
+            mode: "flags",
+            temperature: "0.25",
+        });
     });
 
     it("rejects invalid boolean assignments, unknown options, positionals, and separator tails", () => {
@@ -463,11 +475,16 @@ describe("parseConsensusArgs", () => {
         expect(parseErrorMessage(["--models"])).toBe("Error: --models requires a value");
     });
 
-    it("accepts hyphen-prefixed scalar values through the equals form", () => {
-        expect(parseSuccess(["--prompt=-example"]).prompt).toBe("-example");
+    it("accepts hyphen-prefixed and flag-like scalar values through the equals form", () => {
+        expect(parseSuccess(["--prompt=-example"])).toMatchObject({ mode: "flags", prompt: "-example" });
+        expect(parseSuccess(["--prompt=--no-models"])).toMatchObject({ mode: "flags", prompt: "--no-models" });
+        expect(parseSuccess(["--prompt=--schema=invalid"])).toMatchObject({
+            mode: "flags",
+            prompt: "--schema=invalid",
+        });
     });
 
-    it("rejects negated value options like --no-models before minimist runs", () => {
+    it("rejects negated value options like --no-models", () => {
         for (const option of [
             "models",
             "prompt",
@@ -483,12 +500,24 @@ describe("parseConsensusArgs", () => {
         }
     });
 
-    it("parses --help and -h as known boolean options and still rejects unknown options", () => {
-        expect(parseSuccess(["--models", "m1,m2", "--help"]).help).toBe(true);
-        expect(parseSuccess(["--models", "m1,m2", "-h"]).help).toBe(true);
-        expect(parseSuccess(["--no-help"]).help).toBe(false);
+    it("parses --help and -h as help mode and still rejects unknown options", () => {
+        expect(parseSuccess(["--models", "m1,m2", "--help"])).toEqual({ mode: "help" });
+        expect(parseSuccess(["--models", "m1,m2", "-h"])).toEqual({ mode: "help" });
+        expect(parseSuccess(["--no-help"])).toMatchObject({ mode: "flags" });
         expect(parseErrorMessage(["--help=invalid"])).toBe("Error: --help must be true or false");
         expect(parseErrorMessage(["--models", "m1,m2", "--help", "--bogus"])).toBe("Error: unknown option --bogus");
+    });
+
+    it("rejects invalid long single-letter --h forms and mixed --stdin-json options during parsing", () => {
+        expect(parseErrorMessage(["--h"])).toBe("Error: unknown option --h");
+        expect(parseErrorMessage(["--h=true"])).toBe("Error: unknown option --h");
+        expect(parseErrorMessage(["--no-h"])).toBe("Error: unknown option --no-h");
+        expect(parseErrorMessage(["--stdin-json", "--models", "a,b"])).toBe(
+            "Error: --models cannot be combined with --stdin-json",
+        );
+        expect(parseErrorMessage(["--prompt", "hi", "--stdin-json", "--models", "a,b"])).toBe(
+            "Error: --prompt cannot be combined with --stdin-json",
+        );
     });
 });
 
