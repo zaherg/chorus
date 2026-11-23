@@ -464,32 +464,33 @@ verify_public_install() {
   fi
 
   require_tool curl
-  local work_dir
-  work_dir="$(mktemp -d)"
-  trap 'rm -rf "$work_dir"' RETURN
+  (
+    work_dir="$(mktemp -d)"
+    trap 'rm -rf "$work_dir"' EXIT
 
-  mkdir -p "$work_dir/scripts"
-  local attempt=1
-  local actual=""
-  while [ "$attempt" -le 5 ]; do
-    curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
-      "$RAW_BASE_URL/$INSTALLER_REL" -o "$work_dir/scripts/install.sh"
-    rm -rf "$work_dir/bin"
-    if (cd "$work_dir" && bash scripts/install.sh >/dev/null); then
-      actual="$("$work_dir/bin/consensus" --version)"
-      if [ "$actual" = "consensus $expected_version" ]; then
-        info "Public install verified: $actual"
-        return 0
+    mkdir -p "$work_dir/scripts"
+    attempt=1
+    actual=""
+    while [ "$attempt" -le 5 ]; do
+      curl -fsSL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+        "$RAW_BASE_URL/$INSTALLER_REL" -o "$work_dir/scripts/install.sh"
+      rm -rf "$work_dir/bin"
+      if (cd "$work_dir" && bash scripts/install.sh >/dev/null); then
+        actual="$("$work_dir/bin/consensus" --version)"
+        if [ "$actual" = "consensus $expected_version" ]; then
+          info "Public install verified: $actual"
+          exit 0
+        fi
       fi
-    fi
-    if [ "$attempt" -lt 5 ]; then
-      warn "Public install returned '${actual:-error}' (expected 'consensus $expected_version'); retrying after raw cache delay..."
-      sleep 5
-    fi
-    attempt=$((attempt + 1))
-  done
+      if [ "$attempt" -lt 5 ]; then
+        warn "Public install returned '${actual:-error}' (expected 'consensus $expected_version'); retrying after raw cache delay..."
+        sleep 5
+      fi
+      attempt=$((attempt + 1))
+    done
 
-  die "Public install verification failed: got '${actual:-none}', expected 'consensus $expected_version'."
+    die "Public install verification failed: got '${actual:-none}', expected 'consensus $expected_version'."
+  )
 }
 
 verify_rc_install() {
@@ -500,18 +501,18 @@ verify_rc_install() {
     return 0
   fi
 
-  local work_dir
-  work_dir="$(mktemp -d)"
-  trap 'rm -rf "$work_dir"' RETURN
+  (
+    work_dir="$(mktemp -d)"
+    trap 'rm -rf "$work_dir"' EXIT
 
-  git -C "$ROOT" show "$tag_name:$INSTALLER_REL" >"$work_dir/install.sh"
-  bash "$work_dir/install.sh" --prefix "$work_dir/bin"
-  local actual
-  actual="$("$work_dir/bin/consensus" --version)"
-  if [ "$actual" != "consensus $expected_version" ]; then
-    die "RC install verification failed: got '$actual', expected 'consensus $expected_version'."
-  fi
-  info "RC install verified: $actual"
+    git -C "$ROOT" show "$tag_name:$INSTALLER_REL" >"$work_dir/install.sh"
+    bash "$work_dir/install.sh" --prefix "$work_dir/bin"
+    actual="$("$work_dir/bin/consensus" --version)"
+    if [ "$actual" != "consensus $expected_version" ]; then
+      die "RC install verification failed: got '$actual', expected 'consensus $expected_version'."
+    fi
+    info "RC install verified: $actual"
+  )
 }
 
 cmd_finish() {
