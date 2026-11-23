@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.3.1] - 2026-11-23
+
+### Added
+
+- Add phased local release helper script.
+
+### Changed
+
+- Replace minimist and ad-hoc scanners with strict single-pass option parser.
+
+### Other
+
+- Unify private-storage fs primitives across config, logs, and cache.
+- Single-source consensus wire types from Zod v4 schemas.
+- Centralize timeout clamping and abort error classification.
+- Harden secret redaction, release smoke tests, and test isolation.
+- Bump version to 0.3.1.
+
 ## [0.3.0] - 2026-11-21
 
 ### Added
