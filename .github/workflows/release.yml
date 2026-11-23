@@ -122,14 +122,7 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          actual="$("./$ASSET" --version)"
-          if [ "$actual" != "consensus $VERSION" ]; then
-            echo "::error::$ASSET --version printed '$actual', expected 'consensus $VERSION'"
-            exit 1
-          fi
-          "./$ASSET" --schema > schema.json
-          bun -e 'const doc = await Bun.file("schema.json").json(); const schemas = Array.isArray(doc.anyOf) ? doc.anyOf.map((v) => v?.properties?.schema?.const) : []; if (typeof doc.$schema !== "string" || !schemas.includes("cli.consensus/2") || !schemas.includes("cli.consensus.error/1")) throw new Error("unexpected --schema JSON Schema output");'
-          echo "$ASSET: $actual"
+          bun "$GITHUB_WORKSPACE/scripts/smoke-test-cli.ts" "./$ASSET" "$VERSION"
 
       - name: Upload binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

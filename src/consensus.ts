@@ -12,6 +12,7 @@ import { embedFiles } from "@/utils/files";
 import { getErrorMessage } from "@/utils/helpers";
 import { logger } from "@/utils/logger";
 import { buildConsensusPrompt, buildSynthesisPrompt } from "@/utils/prompts";
+import { redactSecrets } from "@/utils/redact";
 
 const EMPTY_EMBEDDED: EmbeddedFileResult = {
     embedded_files: [],
@@ -76,7 +77,7 @@ const queryModel = async ({
             stance: null,
             error: {
                 code: "provider_request_failed",
-                message: result.error.message,
+                message: redactSecrets(result.error.message),
                 retryable: result.error.retryable,
             },
         };
@@ -166,7 +167,7 @@ const failedParticipant = (modelId: string, reason: unknown): ParticipantRespons
     stance: null,
     error: {
         code: "provider_request_failed",
-        message: getErrorMessage(reason),
+        message: redactSecrets(getErrorMessage(reason)),
         retryable: isRetryableError(reason),
     },
 });
@@ -317,7 +318,7 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
                     if (!synthesisResult.ok) {
                         synthesisError = {
                             code: "provider_request_failed",
-                            message: synthesisResult.error.message,
+                            message: redactSecrets(synthesisResult.error.message),
                             retryable: synthesisResult.error.retryable ?? true,
                         };
                     } else {
@@ -327,7 +328,7 @@ export const runConsensus = async (request: ConsensusRequest): Promise<Consensus
             } catch (e) {
                 synthesisError = {
                     code: "provider_request_failed",
-                    message: getErrorMessage(e),
+                    message: redactSecrets(getErrorMessage(e)),
                     retryable: isRetryableError(e),
                 };
             }

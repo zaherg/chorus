@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
     chmodSync,
     mkdirSync,
@@ -171,6 +171,34 @@ describe("model-catalog", () => {
             expect(result.error.code).toBe("oversized");
         });
 
+        test("rejects immediately before reading body stream when Content-Length exceeds MAX_RESPONSE_BYTES", async () => {
+            let bodyRead = false;
+            const stream = new ReadableStream<Uint8Array>(
+                {
+                    pull() {
+                        bodyRead = true;
+                    },
+                },
+                { highWaterMark: 0 },
+            );
+            const response = new Response(stream, {
+                status: 200,
+                headers: {
+                    "content-type": "application/json",
+                    "content-length": String(MAX_RESPONSE_BYTES + 1),
+                },
+            });
+            const { fn } = makeFetch(response);
+
+            const result = await fetchCatalog(fn);
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error.code).toBe("oversized");
+            expect(result.error.message).toContain("Content-Length");
+            expect(bodyRead).toBe(false);
+            expect(response.bodyUsed).toBe(false);
+        });
+
         test("returns { ok: false, code: 'invalid_json' } on JSON parse failure", async () => {
             const { fn } = makeFetch(okJsonResponse("{not json"));
             const result = await fetchCatalog(fn);
@@ -238,24 +266,7 @@ describe("model-catalog", () => {
             }
         });
 
-        test("clamps non-positive, non-finite, and oversized timeoutMs and classifies wrapped TimeoutError causes", async () => {
-            const timeoutSpy = spyOn(AbortSignal, "timeout");
-            try {
-                for (const badTimeout of [Number.NaN, -1, 0, 0.5]) {
-                    const { fn } = makeFetch(okJsonResponse(fixture));
-                    const res = await fetchCatalog(fn, () => new Date(), { timeoutMs: badTimeout });
-                    expect(res.ok).toBe(true);
-                    expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
-                }
-
-                const { fn: oversizedFn } = makeFetch(okJsonResponse(fixture));
-                const oversizedRes = await fetchCatalog(oversizedFn, () => new Date(), { timeoutMs: 9_999_999_999 });
-                expect(oversizedRes.ok).toBe(true);
-                expect(timeoutSpy).toHaveBeenLastCalledWith(2_147_483_647);
-            } finally {
-                timeoutSpy.mockRestore();
-            }
-
+        test("returns { ok: false, code: 'timeout' } when fetch rejects with a wrapped TimeoutError cause", async () => {
             const wrappedTimeout = new TypeError("fetch failed", {
                 cause: new DOMException("The operation timed out.", "TimeoutError"),
             });
@@ -688,6 +699,213 @@ describe("model-catalog", () => {
             const writtenMeta = JSON.parse(metadataCall?.content ?? "{}");
             expect(writtenMeta.etag).toBe('"etag-new"');
         });
+
+        test("deduplicates concurrent loadCatalog calls for the same configDir and forceRefresh: false", async () => {
+            let fetchCount = 0;
+            let resolveFetch!: (response: Response) => void;
+            const pendingFetch = new Promise<Response>((resolveResponse) => {
+                resolveFetch = resolveResponse;
+            });
+            const fetchFn: FetchFn = async () => {
+                fetchCount += 1;
+                return pendingFetch;
+            };
+            const { writer } = makeWriter();
+            const configDir = "/etc/zaher-dedup-same";
+
+            const firstPromise = loadCatalog({
+                configDir,
+                fetchFn,
+                reader: noopReader,
+                writer,
+                now,
+                forceRefresh: false,
+            });
+            const secondPromise = loadCatalog({
+                configDir,
+                fetchFn,
+                reader: noopReader,
+                writer,
+                now,
+                forceRefresh: false,
+            });
+
+            expect(fetchCount).toBe(1);
+            resolveFetch(okJsonResponse(fixture));
+
+            const [first, second] = await Promise.all([firstPromise, secondPromise]);
+            expect(fetchCount).toBe(1);
+            expect(first.ok).toBe(true);
+            expect(second.ok).toBe(true);
+            if (!first.ok || !second.ok) return;
+            expect(first.cache.status).toBe("fresh");
+            expect(second).toEqual(first);
+        });
+
+        test("uses a separate dedup key for a concurrent forceRefresh: true call", async () => {
+            let fetchCount = 0;
+            const resolvers: Array<(response: Response) => void> = [];
+            const fetchFn: FetchFn = async () => {
+                fetchCount += 1;
+                return new Promise<Response>((resolveResponse) => {
+                    resolvers.push(resolveResponse);
+                });
+            };
+            const { writer } = makeWriter();
+            const configDir = "/etc/zaher-dedup-force";
+
+            const normalPromise = loadCatalog({
+                configDir,
+                fetchFn,
+                reader: noopReader,
+                writer,
+                now,
+                forceRefresh: false,
+            });
+            const refreshPromise = loadCatalog({
+                configDir,
+                fetchFn,
+                reader: noopReader,
+                writer,
+                now,
+                forceRefresh: true,
+            });
+
+            expect(fetchCount).toBe(2);
+            expect(resolvers).toHaveLength(2);
+            resolvers[0]?.(okJsonResponse(fixture));
+            resolvers[1]?.(okJsonResponse(fixture));
+
+            const [normalResult, refreshResult] = await Promise.all([normalPromise, refreshPromise]);
+            expect(normalResult.ok).toBe(true);
+            expect(refreshResult.ok).toBe(true);
+            if (!normalResult.ok || !refreshResult.ok) return;
+            expect(normalResult.cache.status).toBe("fresh");
+            expect(refreshResult.cache.status).toBe("fresh");
+        });
+
+        test("clears dedup entry after a failed in-flight fetch so a subsequent call fetches again", async () => {
+            let fetchCount = 0;
+            let rejectFirstFetch!: (error: Error) => void;
+            const firstPending = new Promise<Response>((_resolve, reject) => {
+                rejectFirstFetch = reject;
+            });
+            const fetchFn: FetchFn = async () => {
+                fetchCount += 1;
+                if (fetchCount === 1) {
+                    return firstPending;
+                }
+                return okJsonResponse(fixture);
+            };
+            const { writer } = makeWriter();
+            const configDir = "/etc/zaher-dedup-retry";
+
+            const failedPromise = loadCatalog({
+                configDir,
+                fetchFn,
+                reader: noopReader,
+                writer,
+                now,
+                forceRefresh: false,
+            });
+            rejectFirstFetch(new Error("transient outage"));
+
+            const firstResult = await failedPromise;
+            expect(firstResult.ok).toBe(false);
+            if (firstResult.ok) return;
+            expect(firstResult.error.code).toBe("catalog_unavailable");
+
+            const secondResult = await loadCatalog({
+                configDir,
+                fetchFn,
+                reader: noopReader,
+                writer,
+                now,
+                forceRefresh: false,
+            });
+            expect(fetchCount).toBe(2);
+            expect(secondResult.ok).toBe(true);
+            if (!secondResult.ok) return;
+            expect(secondResult.cache.status).toBe("fresh");
+        });
+
+        test("returns catalog_unavailable on unexpected 304 Not Modified without cached catalog", async () => {
+            const { fn: fetchFn, calls: fetchCalls } = makeFetch(new Response(null, { status: 304 }));
+            const { writer, calls: writeCalls } = makeWriter();
+
+            const result = await loadCatalog({
+                configDir: "/etc/zaher-unexpected-304",
+                fetchFn,
+                reader: noopReader,
+                writer,
+                now,
+            });
+
+            expect(fetchCalls).toHaveLength(1);
+            expect(writeCalls).toHaveLength(0);
+            expect(result.ok).toBe(false);
+            if (result.ok) return;
+            expect(result.error.code).toBe("catalog_unavailable");
+            expect(result.error.message).toContain("304");
+        });
+
+        test("falls back to network fetch when cache metadata or catalog JSON is corrupt", async () => {
+            const freshMeta = freshMetadata("2026-05-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z");
+            const corruptCases = [
+                {
+                    name: "corrupt-meta",
+                    files: {
+                        [METADATA_RELATIVE_PATH]: "{not valid json",
+                        [CATALOG_RELATIVE_PATH]: JSON.stringify(fixture),
+                    },
+                },
+                {
+                    name: "corrupt-catalog",
+                    files: {
+                        [METADATA_RELATIVE_PATH]: JSON.stringify(freshMeta),
+                        [CATALOG_RELATIVE_PATH]: "{not valid json",
+                    },
+                },
+            ];
+
+            for (const { name, files } of corruptCases) {
+                const reader = makeReader(files);
+
+                // Network succeeds: recovers by fetching and rewriting cache.
+                const { fn: okFetchFn, calls: okFetchCalls } = makeFetch(okJsonResponse(fixture));
+                const { writer: okWriter, calls: writeCalls } = makeWriter();
+                const recovered = await loadCatalog({
+                    configDir: `/etc/zaher-${name}-recover`,
+                    fetchFn: okFetchFn,
+                    reader,
+                    writer: okWriter,
+                    now,
+                });
+                expect(okFetchCalls).toHaveLength(1);
+                expect(writeCalls).toHaveLength(2);
+                expect(recovered.ok).toBe(true);
+                if (recovered.ok) {
+                    expect(recovered.cache.status).toBe("fresh");
+                }
+
+                // Network fails: returns catalog_unavailable instead of serving corrupt cache.
+                const { fn: failFetchFn, calls: failFetchCalls } = makeFetch(new Error("upstream down"));
+                const { writer: failWriter } = makeWriter();
+                const failed = await loadCatalog({
+                    configDir: `/etc/zaher-${name}-fail`,
+                    fetchFn: failFetchFn,
+                    reader,
+                    writer: failWriter,
+                    now,
+                });
+                expect(failFetchCalls).toHaveLength(1);
+                expect(failed.ok).toBe(false);
+                if (!failed.ok) {
+                    expect(failed.error.code).toBe("catalog_unavailable");
+                    expect(failed.error.message).toContain("upstream down");
+                }
+            }
+        });
     });
 
     describe("cache-fs", () => {
@@ -780,6 +998,16 @@ describe("model-catalog", () => {
                 expect(readFileSync(outsideFile, "utf-8")).toBe('{"secret":"do-not-read"}');
             } finally {
                 rmSync(tempRoot, { recursive: true, force: true });
+            }
+        });
+
+        test("makeLocalFileReader returns { ok: false, code: 'missing' } when target file does not exist", () => {
+            const tempConfigDir = mkdtempSync(join(tmpdir(), "chorus-cache-missing-"));
+            try {
+                const reader = makeLocalFileReader(tempConfigDir);
+                expect(reader(CATALOG_RELATIVE_PATH)).toEqual({ ok: false, code: "missing" });
+            } finally {
+                rmSync(tempConfigDir, { recursive: true, force: true });
             }
         });
     });

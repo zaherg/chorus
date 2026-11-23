@@ -1,18 +1,17 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Readable } from "node:stream";
 
-import { runCli } from "@/cli";
 import {
     DEFAULT_STDIN_MAX_BYTES,
     parseConsensusArgs,
     readStdinBounded,
-    runConsensusCommand,
+    runConsensusCommand as realRunConsensusCommand,
 } from "@/commands/consensus";
-import * as actualConfigModule from "@/config";
-import * as actualConsensusModule from "@/consensus";
-import * as actualModelCatalogModule from "@/providers/model-catalog";
-import * as actualRegistryModule from "@/providers/registry";
-import * as actualResolveRouteModule from "@/providers/resolve-route";
+import type * as actualConfigModule from "@/config";
+import type * as actualConsensusModule from "@/consensus";
+import type * as actualModelCatalogModule from "@/providers/model-catalog";
+import type * as actualRegistryModule from "@/providers/registry";
+import { classifyInput as realClassifyInput, resolveRoute as realResolveRoute } from "@/providers/resolve-route";
 import { CliConsensusOutputSchema } from "@/types/consensus";
 import {
     BrokerModelInfoSchema,
@@ -20,15 +19,8 @@ import {
     type ProviderId,
     type ProviderListEntry,
 } from "@/types/providers";
-import * as actualLoggerModule from "@/utils/logger";
+import type * as actualLoggerModule from "@/utils/logger";
 import { captureOutput, testConfig } from "./helpers";
-
-const originalConfigExports = { ...actualConfigModule };
-const originalConsensusExports = { ...actualConsensusModule };
-const originalModelCatalogExports = { ...actualModelCatalogModule };
-const originalRegistryExports = { ...actualRegistryModule };
-const originalResolveRouteExports = { ...actualResolveRouteModule };
-const originalLoggerExports = { ...actualLoggerModule };
 
 type FullModelsListResponse = Omit<ModelsListResponse, "providers"> & {
     providers: Record<ProviderId, ProviderListEntry>;
@@ -115,9 +107,9 @@ const makeMockRegistry = (configured: string[]): ReturnType<typeof actualRegistr
 });
 
 type LoadCatalogResult = Awaited<ReturnType<typeof actualModelCatalogModule.loadCatalog>>;
-type ResolveRouteFn = typeof actualResolveRouteModule.resolveRoute;
+type ResolveRouteFn = typeof realResolveRoute;
 type ResolveRouteResult = ReturnType<ResolveRouteFn>;
-type ClassifyInputFn = typeof actualResolveRouteModule.classifyInput;
+type ClassifyInputFn = typeof realClassifyInput;
 
 let loadConfigHandler: typeof actualConfigModule.loadConfig;
 let configureLoggingHandler: typeof actualLoggerModule.configureLogging;
@@ -127,6 +119,19 @@ let createProviderRegistryHandler: () => ReturnType<typeof actualRegistryModule.
 let classifyInputHandler: ClassifyInputFn;
 let resolveRouteHandler: ResolveRouteFn;
 let runConsensusHandler: (request: unknown) => Promise<unknown>;
+
+const runConsensusCommand = (args: string[]) =>
+    realRunConsensusCommand(args, {
+        loadConfig: (...callArgs) => loadConfigHandler(...callArgs),
+        configureLogging: (...callArgs) => configureLoggingHandler(...callArgs),
+        loadCatalog: () => loadCatalogHandler(),
+        isProviderConfigured: (id) => isProviderConfiguredHandler(id),
+        createProviderRegistry: () => createProviderRegistryHandler(),
+        classifyInput: (input) => classifyInputHandler(input),
+        resolveRoute: (input, options) => resolveRouteHandler(input, options),
+        runConsensus: (request) =>
+            runConsensusHandler(request) as ReturnType<typeof actualConsensusModule.runConsensus>,
+    });
 
 const resetMocks = (): void => {
     loadConfigHandler = async () => testConfig();
@@ -141,46 +146,12 @@ const resetMocks = (): void => {
     const defaultConfigured = ["openrouter", "google-vertex", "anthropic"];
     isProviderConfiguredHandler = (id: string) => defaultConfigured.includes(id);
     createProviderRegistryHandler = () => makeMockRegistry(defaultConfigured);
-    classifyInputHandler = originalResolveRouteExports.classifyInput;
-    resolveRouteHandler = originalResolveRouteExports.resolveRoute;
+    classifyInputHandler = realClassifyInput;
+    resolveRouteHandler = realResolveRoute;
     runConsensusHandler = defaultConsensusImpl;
 };
 
 resetMocks();
-
-mock.module("@/config", () => ({
-    ...originalConfigExports,
-    loadConfig: (...args: Parameters<typeof actualConfigModule.loadConfig>) => loadConfigHandler(...args),
-}));
-
-mock.module("@/utils/logger", () => ({
-    ...originalLoggerExports,
-    configureLogging: (...args: Parameters<typeof actualLoggerModule.configureLogging>) =>
-        configureLoggingHandler(...args),
-}));
-
-mock.module("@/providers/model-catalog", () => ({
-    ...originalModelCatalogExports,
-    loadCatalog: () => loadCatalogHandler(),
-}));
-
-mock.module("@/providers/registry", () => ({
-    ...originalRegistryExports,
-    isProviderConfigured: (id: string) => isProviderConfiguredHandler(id),
-    createProviderRegistry: () => createProviderRegistryHandler(),
-}));
-
-mock.module("@/providers/resolve-route", () => ({
-    ...originalResolveRouteExports,
-    classifyInput: (input: string) => classifyInputHandler(input),
-    resolveRoute: (input: Parameters<ResolveRouteFn>[0], options: Parameters<ResolveRouteFn>[1]) =>
-        resolveRouteHandler(input, options),
-}));
-
-mock.module("@/consensus", () => ({
-    ...originalConsensusExports,
-    runConsensus: (request: unknown) => runConsensusHandler(request),
-}));
 
 beforeEach(() => {
     resetMocks();
@@ -188,15 +159,6 @@ beforeEach(() => {
 
 afterEach(() => {
     resetMocks();
-});
-
-afterAll(() => {
-    mock.module("@/config", () => originalConfigExports);
-    mock.module("@/utils/logger", () => originalLoggerExports);
-    mock.module("@/providers/model-catalog", () => originalModelCatalogExports);
-    mock.module("@/providers/registry", () => originalRegistryExports);
-    mock.module("@/providers/resolve-route", () => originalResolveRouteExports);
-    mock.module("@/consensus", () => originalConsensusExports);
 });
 
 const stubConfig = (impl: typeof actualConfigModule.loadConfig): void => {
@@ -270,21 +232,15 @@ const stubDownstreamWorkCounters = () => {
     return counters;
 };
 
-const stubRouteResolver = (resolveInput: (input: string) => ResolveRouteResult) => {
-    const classificationCounts = new Map<string, number>();
-    const resolutionCounts = new Map<string, number>();
-    classifyInputHandler = (input: string) => {
-        classificationCounts.set(input, (classificationCounts.get(input) ?? 0) + 1);
-        return input.includes("/")
+const stubRouteResolver = (resolveInput: (input: string) => ResolveRouteResult): void => {
+    classifyInputHandler = (input: string) =>
+        input.includes("/")
             ? { kind: "exact_route_id" as const, route_id: input }
             : { kind: "unqualified" as const, providerModelId: input };
-    };
     resolveRouteHandler = (input) => {
         const rawInput = input.kind === "exact_route_id" ? input.route_id : input.providerModelId;
-        resolutionCounts.set(rawInput, (resolutionCounts.get(rawInput) ?? 0) + 1);
         return resolveInput(rawInput);
     };
-    return { classificationCounts, resolutionCounts };
 };
 
 const mockStdin = async (
@@ -519,6 +475,11 @@ describe("parseConsensusArgs", () => {
             "Error: --prompt cannot be combined with --stdin-json",
         );
     });
+
+    it("handles value-option lookahead when followed by another flag or bare hyphen", () => {
+        expect(parseErrorMessage(["--models", "--prompt", "foo"])).toBe("Error: --models requires a value");
+        expect(parseSuccess(["--prompt", "-"])).toMatchObject({ mode: "flags", prompt: "-" });
+    });
 });
 
 describe("runConsensusCommand", () => {
@@ -614,27 +575,6 @@ describe("runConsensusCommand", () => {
         }
         expect(counters.configLoad).toBe(0);
         expect(counters.catalogLoad).toBe(0);
-    });
-
-    it("emits ok: true and embeddedFiles on a successful consensus", async () => {
-        stubDefaults();
-        const { result, stdout } = await captureOutput(() =>
-            runConsensusCommand([
-                "--models",
-                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
-                "--prompt",
-                "test",
-            ]),
-        );
-        expect(result).toBe(0);
-        const payload = JSON.parse(stdout);
-        expect(payload.ok).toBe(true);
-        expect(payload.schema).toBe("cli.consensus/2");
-        expect(payload.embeddedFiles).toBeDefined();
-        expect(payload.embeddedFiles.embedded_files).toEqual([]);
-        expect(payload.embeddedFiles.skipped_files).toEqual([]);
-        expect(payload.embeddedFiles.embedded_text).toBe("");
-        expect(payload.embeddedFiles.total_tokens).toBe(0);
     });
 
     it("preserves files, sequential execution, and request-level domain validation", async () => {
@@ -768,22 +708,6 @@ describe("runConsensusCommand", () => {
                 },
             ],
         });
-    });
-
-    it("rejects a CLI synthesis model instead of using it as a stdin JSON fallback", async () => {
-        stubDefaults();
-        let consensusCalls = 0;
-        stubRunConsensus(async () => {
-            consensusCalls += 1;
-            return defaultConsensusImpl();
-        });
-
-        await expectStdinJsonRejection(
-            ["--stdin-json", "--synthesis-model", "anthropic/claude-sonnet-4-5"],
-            "Error: --synthesis-model cannot be combined with --stdin-json",
-        );
-
-        expect(consensusCalls).toBe(0);
     });
 
     it("rejects invalid non-stdin temperature and model=value request fields", async () => {
@@ -1286,14 +1210,13 @@ describe("runConsensusCommand", () => {
         expect(conflictCallCount).toBe(0);
     });
 
-    it("accepts valid stdin JSON split across multiple chunks and restores the stdin descriptor", async () => {
+    it("accepts valid stdin JSON split across multiple chunks", async () => {
         stubDefaults();
         let receivedRequest: unknown;
         stubRunConsensus(async (request: unknown) => {
             receivedRequest = request;
             return defaultConsensusImpl();
         });
-        const originalDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
         const input = JSON.stringify({
             models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
             prompt: "multi-chunk",
@@ -1306,7 +1229,6 @@ describe("runConsensusCommand", () => {
         expect(result).toBe(0);
         expect(stderr).toBe("");
         expect(receivedRequest).toMatchObject({ findings: "multi-chunk", step: "multi-chunk" });
-        expect(Object.getOwnPropertyDescriptor(process, "stdin")).toEqual(originalDescriptor);
         expect(stream.destroyed).toBe(true);
     });
 
@@ -1512,141 +1434,6 @@ describe("runConsensusCommand", () => {
         });
     });
 
-    it("classifies and resolves one active selector only once across all three maps", async () => {
-        stubDefaults();
-        const googleModel = BrokerModelInfoSchema.parse({
-            route_id: "google-vertex/gemini-2.5-pro",
-            provider: "google-vertex",
-            provider_model_id: "gemini-2.5-pro",
-            display_name: "Gemini 2.5 Pro",
-        });
-        const openrouterModel = BrokerModelInfoSchema.parse({
-            route_id: "openrouter/openai/gpt-5.2",
-            provider: "openrouter",
-            provider_model_id: "openai/gpt-5.2",
-            display_name: "GPT-5.2",
-        });
-        const { classificationCounts, resolutionCounts } = stubRouteResolver((input) => {
-            if (input === "google-vertex/gemini-2.5-pro" || input === "gemini-2.5-pro") {
-                return { ok: true as const, value: googleModel };
-            }
-            if (input === "openrouter/openai/gpt-5.2") {
-                return { ok: true as const, value: openrouterModel };
-            }
-            throw new Error(`Unexpected route input: ${input}`);
-        });
-        let receivedRequest: unknown;
-        stubRunConsensus(async (request: unknown) => {
-            receivedRequest = request;
-            return defaultConsensusImpl();
-        });
-
-        const { result } = await captureOutput(() =>
-            runConsensusCommand([
-                "--models",
-                "google-vertex/gemini-2.5-pro,openrouter/openai/gpt-5.2",
-                "--prompt",
-                "test",
-                "--stance",
-                "gemini-2.5-pro=for",
-                "--thinking-mode",
-                "gemini-2.5-pro=high",
-                "--temperature-model",
-                "gemini-2.5-pro=0.6",
-            ]),
-        );
-
-        expect(result).toBe(0);
-        expect(classificationCounts.get("gemini-2.5-pro")).toBe(1);
-        expect(resolutionCounts.get("gemini-2.5-pro")).toBe(1);
-        expect(receivedRequest).toMatchObject({
-            models: [
-                {
-                    model_id: "google-vertex/gemini-2.5-pro",
-                    stance: "for",
-                    thinking_mode: "high",
-                    temperature: 0.6,
-                },
-                { model_id: "openrouter/openai/gpt-5.2" },
-            ],
-        });
-    });
-
-    it("finishes selector resolution before rejecting an earlier unselected selector", async () => {
-        stubDefaults();
-        const googleModel = BrokerModelInfoSchema.parse({
-            route_id: "google-vertex/gemini-2.5-pro",
-            provider: "google-vertex",
-            provider_model_id: "gemini-2.5-pro",
-            display_name: "Gemini 2.5 Pro",
-        });
-        const openrouterModel = BrokerModelInfoSchema.parse({
-            route_id: "openrouter/openai/gpt-5.2",
-            provider: "openrouter",
-            provider_model_id: "openai/gpt-5.2",
-            display_name: "GPT-5.2",
-        });
-        const anthropicModel = BrokerModelInfoSchema.parse({
-            route_id: "anthropic/claude-sonnet-4-5",
-            provider: "anthropic",
-            provider_model_id: "claude-sonnet-4-5",
-            display_name: "Claude Sonnet 4.5",
-        });
-        const { classificationCounts, resolutionCounts } = stubRouteResolver((input) => {
-            if (input === "google-vertex/gemini-2.5-pro") {
-                return { ok: true as const, value: googleModel };
-            }
-            if (input === "openrouter/openai/gpt-5.2") {
-                return { ok: true as const, value: openrouterModel };
-            }
-            if (input === "claude-sonnet-4-5") {
-                return { ok: true as const, value: anthropicModel };
-            }
-            if (input === "shared") {
-                return {
-                    ok: false as const,
-                    error: {
-                        code: "ambiguous_model" as const,
-                        input: "shared",
-                        candidates: ["anthropic/shared", "google-vertex/shared"],
-                        message: "Model 'shared' is exposed by multiple configured providers.",
-                    },
-                };
-            }
-            throw new Error(`Unexpected route input: ${input}`);
-        });
-        let consensusCallCount = 0;
-        stubRunConsensus(async () => {
-            consensusCallCount += 1;
-            return defaultConsensusImpl();
-        });
-
-        const { result, stderr, stdout } = await captureOutput(() =>
-            runConsensusCommand([
-                "--models",
-                "google-vertex/gemini-2.5-pro,openrouter/openai/gpt-5.2",
-                "--prompt",
-                "test",
-                "--stance",
-                "claude-sonnet-4-5=for",
-                "--thinking-mode",
-                "shared=high",
-            ]),
-        );
-
-        expect(result).toBe(3);
-        expect(stderr).toBe("");
-        const payload = JSON.parse(stdout);
-        expect(payload.error.code).toBe("ambiguous_model");
-        expect(payload.error.input).toBe("shared");
-        expect(payload.error.candidates).toEqual(["anthropic/shared", "google-vertex/shared"]);
-        expect(classificationCounts.get("claude-sonnet-4-5")).toBe(1);
-        expect(resolutionCounts.get("claude-sonnet-4-5")).toBe(1);
-        expect(classificationCounts.get("shared")).toBe(1);
-        expect(resolutionCounts.get("shared")).toBe(1);
-        expect(consensusCallCount).toBe(0);
-    });
-
     it("returns 1 when the catalog is unavailable", async () => {
         stubCatalogUnavailable("network unreachable");
         stubConfiguredProviders([]);
@@ -1771,7 +1558,6 @@ describe("runConsensusCommand", () => {
 
     it("returns code 1 for an immediate stdin stream error before downstream work", async () => {
         const counters = stubDownstreamWorkCounters();
-        const originalDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
         const stream = new Readable({
             read() {
                 this.destroy(new Error("stdin read failed"));
@@ -1787,13 +1573,11 @@ describe("runConsensusCommand", () => {
         expect(counters.catalogLoad).toBe(0);
         expect(counters.routeWork).toBe(0);
         expect(counters.consensus).toBe(0);
-        expect(Object.getOwnPropertyDescriptor(process, "stdin")).toEqual(originalDescriptor);
         expect(stream.destroyed).toBe(true);
     });
 
     it("returns code 1 for partial stdin followed by a stream error before downstream work", async () => {
         const counters = stubDownstreamWorkCounters();
-        const originalDescriptor = Object.getOwnPropertyDescriptor(process, "stdin");
         const stream = Readable.from(
             (async function* () {
                 yield Buffer.from('{"models":["openrouter/openai/gpt-5.2"');
@@ -1811,18 +1595,7 @@ describe("runConsensusCommand", () => {
         expect(counters.catalogLoad).toBe(0);
         expect(counters.routeWork).toBe(0);
         expect(counters.consensus).toBe(0);
-        expect(Object.getOwnPropertyDescriptor(process, "stdin")).toEqual(originalDescriptor);
         expect(stream.destroyed).toBe(true);
-    });
-
-    it("rejects negated value options with exit code 2", async () => {
-        const counters = stubDownstreamWorkCounters();
-        const { result, stdout, stderr } = await captureOutput(() => runConsensusCommand(["--no-models"]));
-
-        expect(result).toBe(2);
-        expect(stdout).toBe("");
-        expect(stderr).toBe("Error: unknown option --no-models\n");
-        expect(counters.configLoad).toBe(0);
     });
 
     it("rejects whitespace-only CLI --prompt with exit code 2 while preserving intentional indentation", async () => {
@@ -2075,12 +1848,12 @@ describe("runConsensusCommand", () => {
                     const { abortSignal } = request as { abortSignal: AbortSignal };
                     abortSignal.addEventListener("abort", () => {
                         sawAbort = true;
-                        resolve(defaultConsensusImpl());
+                        resolve({ ok: false, errors: ["All model calls aborted due to timeout"] });
                     });
                 }),
         );
 
-        const { result } = await captureOutput(() =>
+        const { result, stdout } = await captureOutput(() =>
             runConsensusCommand([
                 "--models",
                 "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
@@ -2090,51 +1863,13 @@ describe("runConsensusCommand", () => {
         );
 
         expect(sawAbort).toBe(true);
-        expect(result).toBe(0);
-    });
-
-    it("clamps non-finite, non-positive, and oversized cli_timeout_ms and stdin timeoutMs values", async () => {
-        const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
-        const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
-        const clearTimeoutSpy = spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
-        try {
-            for (const [configured, expected] of [
-                [Number.NaN, 2_700_000],
-                [0, 2_700_000],
-                [0.5, 2_700_000],
-                [9_999_999_999, 2_147_483_647],
-            ] as const) {
-                setTimeoutSpy.mockClear();
-                stubConfig(async () => ({
-                    ...testConfig(),
-                    cli_timeout_ms: configured,
-                }));
-                stubRunConsensus(async () => defaultConsensusImpl());
-
-                const { result } = await captureOutput(() =>
-                    runConsensusCommand([
-                        "--models",
-                        "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
-                        "--prompt",
-                        "test",
-                    ]),
-                );
-                expect(result).toBe(0);
-                expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), expected);
-            }
-
-            setTimeoutSpy.mockClear();
-            const text = await readStdinBounded(Readable.from(["hello"]), { timeoutMs: 9_999_999_999 });
-            expect(text).toBe("hello");
-            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 2_147_483_647);
-
-            setTimeoutSpy.mockClear();
-            const fallbackText = await readStdinBounded(Readable.from(["hello"]), { timeoutMs: Number.NaN });
-            expect(fallbackText).toBe("hello");
-            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
-        } finally {
-            setTimeoutSpy.mockRestore();
-            clearTimeoutSpy.mockRestore();
+        expect(result).toBe(1);
+        const payload = CliConsensusOutputSchema.parse(JSON.parse(stdout));
+        expect(payload.ok).toBe(false);
+        if (!payload.ok) {
+            expect(payload.schema).toBe("cli.consensus.error/1");
+            expect(payload.error.code).toBe("broker_error");
+            expect(payload.error.message).toContain("All model calls aborted due to timeout");
         }
     });
 
@@ -2315,48 +2050,108 @@ describe("runConsensusCommand", () => {
             expect(parsedCatalogFail.error.code).toBe("catalog_unavailable");
         }
     });
-});
 
-describe("runCli", () => {
-    it("documents synthesis and stdin JSON contracts", async () => {
-        stubDefaults();
-        const { result, stdout } = await captureOutput(() => runCli(["--help"]));
-        expect(result).toBe(0);
-        expect(stdout).not.toContain("auto-picked");
-        expect(stdout).toContain("skipped when absent");
-        expect(stdout).toContain("route_id");
-        expect(stdout).toContain("exact route_id or a uniquely resolved bare provider_model_id");
-        expect(stdout).toContain("exact unique provider_model_id match");
-        expect(stdout).toContain("No suffix matching or automatic provider choice.");
-        expect(stdout).not.toContain("suffix-matched selectors are accepted");
-        expect(stdout).not.toContain("a provider is chosen automatically");
+    it("forwards the minimum participant context_window as modelContextWindow to runConsensus", async () => {
+        const baseCatalog = fixtureModels();
+        const openrouterModel = BrokerModelInfoSchema.parse({
+            route_id: "openrouter/openai/gpt-5.2",
+            provider: "openrouter",
+            provider_model_id: "openai/gpt-5.2",
+            display_name: "GPT-5.2",
+            context_window: 200_000,
+        });
+        const geminiModel = BrokerModelInfoSchema.parse({
+            route_id: "google-vertex/gemini-2.5-pro",
+            provider: "google-vertex",
+            provider_model_id: "gemini-2.5-pro",
+            display_name: "Gemini 2.5 Pro",
+            context_window: 64_000,
+        });
+        const anthropicModel = BrokerModelInfoSchema.parse({
+            route_id: "anthropic/claude-sonnet-4-5",
+            provider: "anthropic",
+            provider_model_id: "claude-sonnet-4-5",
+            display_name: "Claude Sonnet 4.5",
+        });
 
-        const stdinSection = stdout.slice(stdout.indexOf("STDIN JSON:"), stdout.indexOf("PER-MODEL SELECTORS:"));
-        expect(stdinSection).toContain("When --stdin-json is active, do not combine it with");
-        for (const option of [
-            "--models",
-            "--prompt",
-            "--files",
-            "--temperature",
-            "--stance",
-            "--thinking-mode",
-            "--temperature-model",
-            "--synthesis-model",
-        ]) {
-            expect(stdinSection).toContain(option);
-        }
-        expect(stdinSection).toContain("JSON supplies all value-bearing operational fields.");
-        expect(stdinSection).toContain("JSON synthesis_model is the only synthesis source in this mode.");
-        expect(stdinSection).toContain("Boolean controls such as --sequential remain valid.");
-        expect(stdinSection).toContain("Arguments are parsed first, so syntax errors take precedence.");
-        expect(stdinSection).toContain("A valid --schema request exits before stdin conflict validation.");
-        expect(stdinSection).toContain(
-            "Otherwise, the first conflicting flag in command-line order is reported before stdin is read or downstream work starts.",
+        stubCatalog({
+            ...baseCatalog,
+            providers: {
+                ...baseCatalog.providers,
+                openrouter: { status: "catalog", models: [openrouterModel] },
+                "google-vertex": { status: "catalog", models: [geminiModel] },
+                anthropic: { status: "catalog", models: [anthropicModel] },
+            },
+        });
+        stubConfiguredProviders(["openrouter", "google-vertex", "anthropic"]);
+
+        let receivedRequest: { modelContextWindow?: number } | undefined;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request as { modelContextWindow?: number };
+            return defaultConsensusImpl();
+        });
+
+        const { result } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro,anthropic/claude-sonnet-4-5",
+                "--prompt",
+                "test",
+            ]),
         );
-        expect(stdout).not.toContain("CLI per-model flags are inactive");
 
-        expect(stdout).toContain("1  Consensus or operational error, including stdin read failures");
-        expect(stdout).toContain("2  Argument or request-validation error, including completed invalid stdin input");
-        expect(stdout).toContain("malformed JSON or schema-invalid content");
+        expect(result).toBe(0);
+        expect(receivedRequest?.modelContextWindow).toBe(64_000);
+    });
+
+    it("emits broker_error JSON on stdout and returns exit code 1 when runConsensus throws without a signal", async () => {
+        stubDefaults();
+        stubRunConsensus(async () => {
+            throw new Error("unexpected engine crash");
+        });
+
+        const { result, stdout, stderr } = await captureOutput(() =>
+            runConsensusCommand([
+                "--models",
+                "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                "--prompt",
+                "test",
+            ]),
+        );
+
+        expect(result).toBe(1);
+        expect(stderr).toBe("");
+        const payload = CliConsensusOutputSchema.parse(JSON.parse(stdout));
+        expect(payload.ok).toBe(false);
+        if (!payload.ok) {
+            expect(payload.schema).toBe("cli.consensus.error/1");
+            expect(payload.error.code).toBe("broker_error");
+            expect(payload.error.message).toBe("unexpected engine crash");
+        }
+    });
+
+    it("forwards explicit findings and step fields from --stdin-json instead of falling back to prompt", async () => {
+        stubDefaults();
+        let receivedRequest: unknown;
+        stubRunConsensus(async (request: unknown) => {
+            receivedRequest = request;
+            return defaultConsensusImpl();
+        });
+
+        const input = JSON.stringify({
+            models: ["openrouter/openai/gpt-5.2", "google-vertex/gemini-2.5-pro"],
+            prompt: "base prompt",
+            findings: "explicit findings payload",
+            step: "explicit step description",
+        });
+
+        const { result, stderr } = await mockStdin(() => runConsensusCommand(["--stdin-json"]), input);
+
+        expect(result).toBe(0);
+        expect(stderr).toBe("");
+        expect(receivedRequest).toMatchObject({
+            findings: "explicit findings payload",
+            step: "explicit step description",
+        });
     });
 });

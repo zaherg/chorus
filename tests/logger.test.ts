@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import {
     chmodSync,
     existsSync,
@@ -10,7 +10,6 @@ import {
     symlinkSync,
     writeFileSync,
 } from "node:fs";
-import * as nodeOs from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -177,15 +176,10 @@ describe("redactContextValue", () => {
 describe("configureLogging", () => {
     it("is idempotent when called multiple times and enforces 0700/0600 permissions on POSIX", async () => {
         const tempHome = mkdtempSync(join(tmpdir(), "chorus-logger-test-"));
-        const logsDir = join(tempHome, ".config", "chorus", "logs");
+        const baseDir = join(tempHome, ".config", "chorus");
+        const logsDir = join(baseDir, "logs");
         const errorLogPath = join(logsDir, "error.log");
-        const originalHomedir = nodeOs.homedir;
         const originalUmask = process.platform !== "win32" ? process.umask(0) : undefined;
-
-        mock.module("node:os", () => ({
-            ...nodeOs,
-            homedir: () => tempHome,
-        }));
 
         try {
             if (process.platform !== "win32") {
@@ -193,8 +187,8 @@ describe("configureLogging", () => {
                 chmodSync(logsDir, 0o755);
             }
 
-            await configureLogging("error");
-            await configureLogging("warn");
+            await configureLogging("error", { baseDir });
+            await configureLogging("warn", { baseDir });
 
             logger.error("test failure with sk-proj-abc1234567890_xyz", {
                 anthropic_api_key: "secret-key-value",
@@ -214,11 +208,6 @@ describe("configureLogging", () => {
             }
         } finally {
             await reset();
-            mock.module("node:os", () => ({
-                ...nodeOs,
-                homedir: originalHomedir,
-            }));
-            mock.restore();
             if (originalUmask !== undefined) {
                 process.umask(originalUmask);
             }

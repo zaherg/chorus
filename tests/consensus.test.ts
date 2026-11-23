@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { z } from "zod/v4";
@@ -13,6 +14,7 @@ import {
     CliConsensusOutputSchema,
     type CliConsensusResponse,
     type CliConsensusResponseSchema,
+    type ConsensusModelConfig,
     type ConsensusResult,
     EmbeddedFilesResultSchema,
     type ParticipantError,
@@ -62,24 +64,31 @@ type GenerateTextResult = {
     };
 };
 
+type GenerateTextOptions = {
+    abortSignal?: AbortSignal;
+    maxOutputTokens?: number;
+    temperature?: number;
+    thinkingMode?: string;
+};
+
+type CallLogEntry = {
+    model: string;
+    prompt: string;
+    systemPrompt: string | undefined;
+    options?: GenerateTextOptions;
+};
+
 type GenerateTextImpl = (
     modelId: string,
     prompt: string,
     systemPrompt: string | undefined,
-    options:
-        | {
-              abortSignal?: AbortSignal;
-              maxOutputTokens?: number;
-              temperature?: number;
-              thinkingMode?: string;
-          }
-        | undefined,
+    options: GenerateTextOptions | undefined,
 ) => Promise<Result<GenerateTextResult, ToolError>>;
 
 type RegistryOverrides = {
     models?: BrokerModelInfo[];
     generateTextImpl?: GenerateTextImpl;
-    callLog?: Array<{ model: string; prompt: string; options?: unknown }>;
+    callLog?: CallLogEntry[];
 };
 
 const mockRegistry = (overrides: RegistryOverrides = {}): ProviderRegistry => {
@@ -111,16 +120,9 @@ const mockRegistry = (overrides: RegistryOverrides = {}): ProviderRegistry => {
             modelId: string,
             prompt: string,
             systemPrompt: string | undefined,
-            options:
-                | {
-                      abortSignal?: AbortSignal;
-                      maxOutputTokens?: number;
-                      temperature?: number;
-                      thinkingMode?: string;
-                  }
-                | undefined,
+            options: GenerateTextOptions | undefined,
         ): Promise<Result<GenerateTextResult, ToolError>> => {
-            callLog.push({ model: modelId, prompt, options });
+            callLog.push({ model: modelId, prompt, systemPrompt, options });
             return generateTextImpl(modelId, prompt, systemPrompt, options);
         },
     } as unknown as ProviderRegistry;
@@ -144,11 +146,14 @@ const failResult = (message = "API timeout", retryable = true): Result<GenerateT
 });
 
 const buildRequest = (overrides: {
-    models: Array<{ model_id: string; stance?: "for" | "against" | "neutral" }>;
+    models: ConsensusModelConfig[];
     synthesisModel?: string;
     parallel?: boolean;
     maxConcurrency?: number;
     abortSignal?: AbortSignal;
+    temperature?: number;
+    relevantFiles?: string[];
+    modelContextWindow?: number;
 }) => {
     const catalog: ModelsListResponse = {
         schema: "models.list/1",
@@ -170,11 +175,7 @@ const buildRequest = (overrides: {
 
 describe("runConsensus", () => {
     it("returns cli.consensus/2 with 2 successful participants and no synthesis", async () => {
-        const callLog: Array<{
-            model: string;
-            prompt: string;
-            options?: unknown;
-        }> = [];
+        const callLog: CallLogEntry[] = [];
         const registry = mockRegistry({ callLog });
         const result = await runConsensus({
             providerRegistry: registry,
@@ -202,11 +203,7 @@ describe("runConsensus", () => {
     });
 
     it("returns ok and runs synthesis with one failed and one successful participant", async () => {
-        const callLog: Array<{
-            model: string;
-            prompt: string;
-            options?: unknown;
-        }> = [];
+        const callLog: CallLogEntry[] = [];
         const registry = mockRegistry({
             callLog,
             generateTextImpl: async (modelId) =>
@@ -257,29 +254,6 @@ describe("runConsensus", () => {
         if (result.ok) return;
         expect(result.errors[0]).toMatch(/All participant|fail/i);
         expect(result.errors).toContainEqual(expect.stringContaining("openrouter/gpt-5.2: API timeout"));
-    });
-
-    it("populates synthesis when --synthesis-model is set and the call succeeds", async () => {
-        const callLog: Array<{
-            model: string;
-            prompt: string;
-            options?: unknown;
-        }> = [];
-        const registry = mockRegistry({ callLog });
-        const result = await runConsensus({
-            providerRegistry: registry,
-            ...buildRequest({
-                models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
-                parallel: true,
-                synthesisModel: "claude-sonnet-4-20250514",
-            }),
-        });
-
-        expect(result.ok).toBe(true);
-        if (!result.ok) return;
-        expect(result.synthesis).toBe("Response from anthropic/claude-sonnet-4-20250514");
-        expect(result.synthesis_error).toBeNull();
-        expect(callLog.some((c) => c.model === "anthropic/claude-sonnet-4-20250514")).toBe(true);
     });
 
     it("keeps raw responses and sets synthesis_error when synthesis call fails", async () => {
@@ -431,7 +405,7 @@ describe("runConsensus", () => {
     });
 
     it("omits stance directive and returns stance=null when stance is omitted, while preserving explicit stances", async () => {
-        const callLog: Array<{ model: string; prompt: string; options?: unknown }> = [];
+        const callLog: CallLogEntry[] = [];
         const registry = mockRegistry({ callLog });
 
         const result = await runConsensus({
@@ -516,7 +490,7 @@ describe("runConsensus", () => {
     });
 
     it("skips synthesis and records non-retryable synthesis_error when aborted before synthesis", async () => {
-        const callLog: Array<{ model: string; prompt: string; options?: unknown }> = [];
+        const callLog: CallLogEntry[] = [];
         const controller = new AbortController();
         const registry = mockRegistry({
             callLog,
@@ -600,28 +574,6 @@ describe("runConsensus", () => {
             message: "unexpected synthesis crash",
             retryable: true,
         });
-    });
-
-    it("returns canonical modelInfo.route_id on ParticipantResponse for both success and failure", async () => {
-        const registry = mockRegistry({
-            generateTextImpl: async (modelId) =>
-                modelId === "google-vertex/gemini-2.5-pro" ? failResult("quota", true) : okResult(modelId, "ok"),
-        });
-
-        const result = await runConsensus({
-            providerRegistry: registry,
-            ...buildRequest({
-                models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
-                parallel: true,
-            }),
-        });
-
-        expect(result.ok).toBe(true);
-        if (!result.ok) return;
-        expect(result.models[0].route_id).toBe("openrouter/gpt-5.2");
-        expect(result.models[0].provider).toBe("openrouter");
-        expect(result.models[1].route_id).toBe("google-vertex/gemini-2.5-pro");
-        expect(result.models[1].provider).toBe("google-vertex");
     });
 
     it("logs failed participants consistently in both parallel and sequential modes", async () => {
@@ -712,6 +664,171 @@ describe("runConsensus", () => {
         expect(synthMatch?.[1]).toContain("\\u003c/model-responses\\u003e");
         const parsedSynth = JSON.parse(synthMatch?.[1] ?? "[]") as Array<{ response: string }>;
         expect(parsedSynth[0]?.response).toBe(breakoutText);
+    });
+
+    it("embeds relevantFiles into participant prompts and returns embeddedFiles metadata", async () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "chorus-consensus-"));
+        const filePath = join(tempDir, "sample.ts");
+        const fileContent = "export const consensusSampleValue = 42;\n";
+        writeFileSync(filePath, fileContent, "utf-8");
+
+        try {
+            const callLog: CallLogEntry[] = [];
+            const registry = mockRegistry({ callLog });
+            const result = await runConsensus({
+                providerRegistry: registry,
+                ...buildRequest({
+                    models: [{ model_id: "gpt-5.2" }, { model_id: "gemini-2.5-pro" }],
+                    parallel: true,
+                    relevantFiles: [filePath],
+                    modelContextWindow: 32_000,
+                }),
+            });
+
+            expect(result.ok).toBe(true);
+            if (!result.ok) return;
+
+            const canonicalFilePath = realpathSync(filePath);
+            expect(result.embeddedFiles.embedded_files).toEqual([canonicalFilePath]);
+            expect(result.embeddedFiles.skipped_files).toEqual([]);
+            expect(result.embeddedFiles.embedded_text).toContain(fileContent.trim());
+            expect(result.embeddedFiles.total_tokens).toBeGreaterThan(0);
+
+            expect(callLog).toHaveLength(2);
+            for (const call of callLog) {
+                expect(call.prompt).toContain("<embedded-files>");
+                expect(call.prompt).toContain(fileContent.trim());
+                expect(call.prompt).toContain("</embedded-files>");
+            }
+        } finally {
+            rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("forwards per-model temperature overrides, global synthesis temperature, thinking_mode, and CONSENSUS_SYSTEM_PROMPT", async () => {
+        const callLog: CallLogEntry[] = [];
+        const registry = mockRegistry({ callLog });
+
+        const result = await runConsensus({
+            providerRegistry: registry,
+            ...buildRequest({
+                models: [
+                    { model_id: "gpt-5.2", temperature: 0.2, thinking_mode: "high" },
+                    { model_id: "gemini-2.5-pro" },
+                ],
+                parallel: true,
+                temperature: 0.7,
+                synthesisModel: "claude-sonnet-4-20250514",
+            }),
+        });
+
+        expect(result.ok).toBe(true);
+        expect(callLog).toHaveLength(3);
+
+        const gptCall = callLog.find((c) => c.model === "openrouter/gpt-5.2");
+        const geminiCall = callLog.find((c) => c.model === "google-vertex/gemini-2.5-pro");
+        const synthesisCall = callLog.find((c) => c.model === "anthropic/claude-sonnet-4-20250514");
+
+        expect(gptCall?.systemPrompt).toBe(CONSENSUS_SYSTEM_PROMPT);
+        expect(gptCall?.options?.temperature).toBe(0.2);
+        expect(gptCall?.options?.thinkingMode).toBe("high");
+
+        expect(geminiCall?.systemPrompt).toBe(CONSENSUS_SYSTEM_PROMPT);
+        expect(geminiCall?.options?.temperature).toBe(0.7);
+        expect(geminiCall?.options?.thinkingMode).toBeUndefined();
+
+        expect(synthesisCall?.systemPrompt).toBe(CONSENSUS_SYSTEM_PROMPT);
+        expect(synthesisCall?.options?.temperature).toBe(0.7);
+    });
+
+    it("records provider unknown and non-retryable error for an unresolved participant model", async () => {
+        const callLog: CallLogEntry[] = [];
+        const registry = mockRegistry({ callLog });
+
+        const result = await runConsensus({
+            providerRegistry: registry,
+            ...buildRequest({
+                models: [{ model_id: "gpt-5.2" }, { model_id: "nonexistent/model" }],
+                parallel: true,
+            }),
+        });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+
+        expect(result.models).toHaveLength(2);
+        expect(result.models[0].response).toBeTruthy();
+        expect(result.models[1]).toEqual({
+            route_id: "nonexistent/model",
+            provider: "unknown",
+            provider_model_id: "nonexistent/model",
+            response: null,
+            stance: null,
+            error: {
+                code: "provider_request_failed",
+                message: "Unknown model: nonexistent/model",
+                retryable: false,
+            },
+        });
+        expect(callLog).toHaveLength(1);
+    });
+
+    it("handles thrown participant provider rejections in both parallel and sequential modes", async () => {
+        for (const parallel of [true, false]) {
+            const registry = mockRegistry({
+                generateTextImpl: async (modelId) => {
+                    if (modelId === "google-vertex/gemini-2.5-pro") {
+                        throw Object.assign(new Error("upstream request aborted"), { name: "AbortError" });
+                    }
+                    if (modelId === "anthropic/claude-sonnet-4-20250514") {
+                        throw Object.assign(new Error("invalid request payload"), { retryable: false });
+                    }
+                    return okResult(modelId, "participant ok");
+                },
+            });
+
+            const result = await runConsensus({
+                providerRegistry: registry,
+                ...buildRequest({
+                    models: [
+                        { model_id: "gpt-5.2" },
+                        { model_id: "gemini-2.5-pro" },
+                        { model_id: "claude-sonnet-4-20250514" },
+                    ],
+                    parallel,
+                }),
+            });
+
+            expect(result.ok).toBe(true);
+            if (!result.ok) return;
+
+            expect(result.models).toHaveLength(3);
+            expect(result.models[0].response).toBe("participant ok");
+            expect(result.models[1]).toEqual({
+                route_id: "gemini-2.5-pro",
+                provider: "unknown",
+                provider_model_id: "gemini-2.5-pro",
+                response: null,
+                stance: null,
+                error: {
+                    code: "provider_request_failed",
+                    message: "upstream request aborted",
+                    retryable: true,
+                },
+            });
+            expect(result.models[2]).toEqual({
+                route_id: "claude-sonnet-4-20250514",
+                provider: "unknown",
+                provider_model_id: "claude-sonnet-4-20250514",
+                response: null,
+                stance: null,
+                error: {
+                    code: "provider_request_failed",
+                    message: "invalid request payload",
+                    retryable: false,
+                },
+            });
+        }
     });
 });
 

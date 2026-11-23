@@ -28,10 +28,18 @@ const createCopiedSkill = async (cliVersion = ""): Promise<string> => {
     const dir = await tempDir("chorus-installer");
     await mkdir(join(dir, "scripts"), { recursive: true });
     const installer = await readFile(installerPath, "utf8");
-    expect(installer).toContain('\nCLI_VERSION=""\n');
+    const cliVersionMatches = [...installer.matchAll(/^CLI_VERSION="([^"]*)"$/gm)];
+    expect(cliVersionMatches).toHaveLength(1);
+    const currentCliVersion = cliVersionMatches[0][1];
+    const pkg = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8")) as { version: string };
+    if (pkg.version.includes("-")) {
+        expect(["", `v${pkg.version}`]).toContain(currentCliVersion);
+    } else {
+        expect(currentCliVersion).toBe("");
+    }
     await writeFile(
         join(dir, "scripts", "install.sh"),
-        installer.replace('\nCLI_VERSION=""\n', `\nCLI_VERSION="${cliVersion}"\n`),
+        installer.replace(/^CLI_VERSION="[^"]*"$/m, `CLI_VERSION="${cliVersion}"`),
     );
     await chmod(join(dir, "scripts", "install.sh"), 0o755);
     return dir;

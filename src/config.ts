@@ -7,15 +7,27 @@ import { z } from "zod/v4";
 import { MAX_TIMEOUT_MS } from "@/utils/async";
 import { getErrorMessage } from "@/utils/helpers";
 import { ensurePrivateDir, PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileExclusive } from "@/utils/private-fs";
+import { registerRedactedSecrets } from "@/utils/redact";
 
 const getConfigDir = () => resolve(homedir(), ".config", "chorus");
-const getConfigPath = () => resolve(getConfigDir(), "config.json");
 
 export { MAX_TIMEOUT_MS };
 export const DEFAULT_CLI_TIMEOUT_MS = 2_700_000;
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 1_800_000;
 
 const ENV_VAR_PATTERN = /\$(?:\{([A-Z_][A-Z0-9_]*)\}|([A-Z_][A-Z0-9_]*))/g;
+const UNRESOLVED_ENV_VAR_PATTERN = /\$(?:\{[A-Z_][A-Z0-9_]*\}|[A-Z_][A-Z0-9_]*)/u;
+
+export const hasUnresolvedEnvVar = (value: string): boolean => UNRESOLVED_ENV_VAR_PATTERN.test(value);
+
+const CONFIG_SECRET_KEYS = [
+    "anthropic_api_key",
+    "openrouter_api_key",
+    "amazon_bedrock_api_key",
+    "azure_api_key",
+    "google_vertex_api_key",
+    "custom_api_key",
+] as const;
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const expandedEnvKeysByConfig = new WeakMap<object, ReadonlySet<string>>();
 
@@ -77,7 +89,14 @@ export const wasExpandedFromEnv = (config: ChorusConfig, key: string): boolean =
     return expandedEnvKeysByConfig.get(config)?.has(key) ?? false;
 };
 
-export const getConfigPaths = () => ({ baseDir: getConfigDir(), configPath: getConfigPath() });
+export interface LoadConfigOptions {
+    configDir?: string;
+}
+
+export const getConfigPaths = (configDir?: string) => {
+    const baseDir = configDir ? resolve(configDir) : getConfigDir();
+    return { baseDir, configPath: resolve(baseDir, "config.json") };
+};
 
 const warnPrivateModeError = (label: string, path: string) => (err: unknown) => {
     process.stderr.write(`Warning: could not set private permissions on ${label} ${path}: ${getErrorMessage(err)}\n`);
@@ -159,9 +178,9 @@ const writeDefaultConfig = (configPath: string) => {
     }
 };
 
-export const loadConfig = async () => {
-    const configPath = getConfigPath();
-    ensureConfigDirectories(getConfigDir());
+export const loadConfig = async (options: LoadConfigOptions = {}) => {
+    const { baseDir, configPath } = getConfigPaths(options.configDir);
+    ensureConfigDirectories(baseDir);
     writeDefaultConfig(configPath);
 
     const parsed: unknown = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -174,6 +193,15 @@ export const loadConfig = async () => {
     if (expandedKeys.size > 0) {
         expandedEnvKeysByConfig.set(config, expandedKeys);
     }
+
+    const resolvedSecrets: string[] = [];
+    for (const key of CONFIG_SECRET_KEYS) {
+        const value = config[key];
+        if (typeof value === "string" && value.length > 0 && (expandedKeys.has(key) || !hasUnresolvedEnvVar(value))) {
+            resolvedSecrets.push(value);
+        }
+    }
+    registerRedactedSecrets(resolvedSecrets);
 
     return config;
 };

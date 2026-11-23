@@ -7,7 +7,7 @@ import { createOpenRouter, type OpenRouterProviderOptions, openrouter } from "@o
 import { APICallError, generateText as aiGenerateText, type JSONValue, type LanguageModel, RetryError } from "ai";
 import { z } from "zod/v4";
 
-import { type ChorusConfig, DEFAULT_PROVIDER_TIMEOUT_MS, wasExpandedFromEnv } from "@/config";
+import { type ChorusConfig, DEFAULT_PROVIDER_TIMEOUT_MS, hasUnresolvedEnvVar, wasExpandedFromEnv } from "@/config";
 import { classifyInput, resolveRoute } from "@/providers/resolve-route";
 import type { BrokerModelInfo, ModelsListResponse, ProviderId } from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
@@ -57,19 +57,12 @@ const providerTimeoutMs = (config: ChorusConfig) =>
 
 // === Provider configuration checks ===
 
-const UNRESOLVED_ENV_VAR_PATTERN = /\$(?:\{[A-Z_][A-Z0-9_]*\}|[A-Z_][A-Z0-9_]*)/u;
-
-const isUnresolvedEnvVar = (value: string) => {
-    // Catch standalone and composite $VAR / ${VAR} placeholders.
-    return UNRESOLVED_ENV_VAR_PATTERN.test(value);
-};
-
 const configuredConfigValue = (config: ChorusConfig, key: keyof ChorusConfig): string | undefined => {
     const value = config[key];
     if (typeof value !== "string" || value.length === 0) {
         return undefined;
     }
-    if (!wasExpandedFromEnv(config, key) && isUnresolvedEnvVar(value)) {
+    if (!wasExpandedFromEnv(config, key) && hasUnresolvedEnvVar(value)) {
         return undefined;
     }
     return value;

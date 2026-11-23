@@ -1,5 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import http from "node:http";
+import https from "node:https";
 
 import {
     createPinnedLookup,
@@ -16,6 +18,48 @@ import {
 const neverCallDns: DnsResolveFn = async () => {
     throw new Error("DNS should not be called for literal hosts");
 };
+
+const BLOCKED_IPV4_LITERALS = [
+    "0.0.0.0",
+    "10.0.0.1",
+    "100.100.100.200",
+    "127.0.0.2",
+    "169.254.169.254",
+    "172.16.0.1",
+    "192.0.0.1",
+    "192.0.2.1",
+    "192.168.1.1",
+    "198.18.0.1",
+    "198.51.100.1",
+    "203.0.113.1",
+    "224.0.0.1",
+    "240.0.0.1",
+    "255.255.255.255",
+] as const;
+
+const BLOCKED_IPV6_LITERALS = [
+    "::",
+    "::a9fe:a9fe",
+    "::ffff:0:0:1",
+    "::ffff:10.0.0.1",
+    "::ffff:169.254.169.254",
+    "::ffff:192.168.1.1",
+    "::ffff:a9fe:a9fe",
+    "::ffff:c0a8:101",
+    "2001::a9fe:a9fe",
+    "2001:0000:4136:e378:8000:63bf:3fff:fdd2",
+    "2001:2::1",
+    "0064:ff9b::169.254.169.254",
+    "64:ff9b:1::1",
+    "100::1",
+    "2001:db8::1",
+    "2002:a9fe:a9fe::1",
+    "fc00::1",
+    "fd12:3456::1",
+    "fe80::1",
+    "ff02::1",
+    "0000:0000:0000:0000:0000:ffff:a9fe:a9fe",
+] as const;
 
 const listenOnLoopback = async (
     host: "127.0.0.1" | "::1",
@@ -40,6 +84,7 @@ const listenOnLoopback = async (
 };
 
 const closeServer = async (server: http.Server): Promise<void> => {
+    server.closeAllConnections?.();
     await new Promise<void>((resolve, reject) => {
         server.close((err) => {
             if (err) {
@@ -51,16 +96,65 @@ const closeServer = async (server: http.Server): Promise<void> => {
     });
 };
 
+afterEach(() => {
+    mock.restore();
+});
+
 describe("customProviderBaseUrl and isBlockedHost", () => {
+    test("returns default custom API URL for undefined and empty values", async () => {
+        expect(await customProviderBaseUrl(undefined, false)).toBe("http://localhost:11434/v1");
+        expect(await customProviderBaseUrl("", false)).toBe("http://localhost:11434/v1");
+    });
+
+    test("rejects invalid URL syntax", async () => {
+        for (const rawUrl of ["not-a-url", "://missing-scheme", "http://[::1"]) {
+            await expect(customProviderBaseUrl(rawUrl, false)).rejects.toThrow("custom_url must be a valid URL");
+        }
+    });
+
+    test("rejects non-http(s) protocols", async () => {
+        for (const rawUrl of ["file:///etc/passwd", "ftp://example.com/v1"]) {
+            await expect(customProviderBaseUrl(rawUrl, false)).rejects.toThrow(
+                "custom_url must use http:// or https://",
+            );
+        }
+    });
+
+    test("rejects URLs with embedded credentials", async () => {
+        for (const rawUrl of [
+            "https://user:pass@example.com/v1",
+            "https://user@example.com/v1",
+            "https://:pass@example.com/v1",
+        ]) {
+            await expect(customProviderBaseUrl(rawUrl, false)).rejects.toThrow(
+                "custom_url must not contain credentials",
+            );
+        }
+    });
+
+    test("rejects URLs with fragments", async () => {
+        await expect(customProviderBaseUrl("https://example.com/v1#frag", false)).rejects.toThrow(
+            "custom_url must not contain a fragment",
+        );
+    });
+
+    test("allows http to public IP literals only when allow_insecure_custom is true", async () => {
+        await expect(customProviderBaseUrl("http://93.184.216.34/v1", false)).rejects.toThrow(
+            "custom_url must use https:// unless allow_insecure_custom is set to true",
+        );
+        expect(await customProviderBaseUrl("http://93.184.216.34/v1", true)).toBe("http://93.184.216.34/v1");
+    });
+
     test("allows valid public IPv6 literal without DNS", async () => {
         const url = await customProviderBaseUrl("https://[2606:4700:4700::1111]/v1", false);
         expect(url).toBe("https://[2606:4700:4700::1111]/v1");
         expect(await isBlockedHost("[2606:4700:4700::1111]")).toBeFalse();
     });
 
-    test("allows literal IPv6 loopback URL on http without allow_insecure_custom", async () => {
-        const url = await customProviderBaseUrl("http://[::1]:11434/v1", false);
-        expect(url).toBe("http://[::1]:11434/v1");
+    test("allows literal loopback URLs on http without allow_insecure_custom", async () => {
+        expect(await customProviderBaseUrl("http://localhost:11434/v1", false)).toBe("http://localhost:11434/v1");
+        expect(await customProviderBaseUrl("http://[::1]:11434/v1", false)).toBe("http://[::1]:11434/v1");
+        expect(await customProviderBaseUrl("http://[::ffff:127.0.0.1]/v1", false)).toBe("http://[::ffff:7f00:1]/v1");
         expect(await isBlockedHost("[::1]")).toBeFalse();
     });
 
@@ -81,25 +175,7 @@ describe("customProviderBaseUrl and isBlockedHost", () => {
     });
 
     test("rejects non-globally-reachable RFC 6890 IPv4 literals", async () => {
-        const blockedIpv4 = [
-            "0.0.0.0",
-            "10.0.0.1",
-            "100.100.100.200",
-            "127.0.0.2",
-            "169.254.169.254",
-            "172.16.0.1",
-            "192.0.0.1",
-            "192.0.2.1",
-            "192.168.1.1",
-            "198.18.0.1",
-            "198.51.100.1",
-            "203.0.113.1",
-            "224.0.0.1",
-            "240.0.0.1",
-            "255.255.255.255",
-        ];
-
-        for (const ip of blockedIpv4) {
+        for (const ip of BLOCKED_IPV4_LITERALS) {
             expect(await isBlockedHost(ip)).toBeTrue();
             await expect(customProviderBaseUrl(`https://${ip}/v1`, false)).rejects.toThrow(
                 "custom_url host is not allowed",
@@ -108,26 +184,7 @@ describe("customProviderBaseUrl and isBlockedHost", () => {
     });
 
     test("rejects blocked IPv6 bypass notations", async () => {
-        const blockedIpv6 = [
-            "::",
-            "::a9fe:a9fe",
-            "::ffff:0:0:1",
-            "2001::a9fe:a9fe",
-            "2001:0000:4136:e378:8000:63bf:3fff:fdd2",
-            "2001:2::1",
-            "0064:ff9b::169.254.169.254",
-            "64:ff9b:1::1",
-            "100::1",
-            "2001:db8::1",
-            "2002:a9fe:a9fe::1",
-            "fc00::1",
-            "fd12:3456::1",
-            "fe80::1",
-            "ff02::1",
-            "0000:0000:0000:0000:0000:ffff:a9fe:a9fe",
-        ];
-
-        for (const ip of blockedIpv6) {
+        for (const ip of BLOCKED_IPV6_LITERALS) {
             expect(await isBlockedHost(`[${ip}]`)).toBeTrue();
             await expect(customProviderBaseUrl(`https://[${ip}]/v1`, false)).rejects.toThrow(
                 "custom_url host is not allowed",
@@ -165,7 +222,7 @@ describe("resolveAndValidateHostname", () => {
     });
 
     test("rejects private and RFC 6890 non-global IPv4 literals", async () => {
-        for (const ip of ["192.168.1.1", "100.100.100.200", "198.18.0.1", "192.0.0.1", "224.0.0.1", "240.0.0.1"]) {
+        for (const ip of BLOCKED_IPV4_LITERALS) {
             await expect(resolveAndValidateHostname(ip, neverCallDns)).rejects.toThrow(
                 "custom_url host is not allowed",
             );
@@ -173,21 +230,7 @@ describe("resolveAndValidateHostname", () => {
     });
 
     test("rejects blocked IPv6 literals without calling DNS", async () => {
-        const blocked = [
-            "::",
-            "::a9fe:a9fe",
-            "::ffff:10.0.0.1",
-            "2001::a9fe:a9fe",
-            "2001:0000:4136:e378:8000:63bf:3fff:fdd2",
-            "0064:ff9b::169.254.169.254",
-            "64:ff9b:1::1",
-            "100::1",
-            "2001:db8::1",
-            "ff02::1",
-            "0000:0000:0000:0000:0000:ffff:a9fe:a9fe",
-        ];
-
-        for (const ip of blocked) {
+        for (const ip of BLOCKED_IPV6_LITERALS) {
             await expect(resolveAndValidateHostname(ip, neverCallDns)).rejects.toThrow(
                 "custom_url host is not allowed",
             );
@@ -431,5 +474,213 @@ describe("createSafeCustomFetch", () => {
 
         const safeFetch = createSafeCustomFetch(defaultDnsResolve);
         await expect(safeFetch("http://127.0.0.1:1/test", { signal: controller.signal })).rejects.toThrow("Cancelled");
+    });
+
+    test("rejects non-http(s) URLs in createSafeCustomFetch and pinnedHttpTransport", async () => {
+        const safeFetch = createSafeCustomFetch(neverCallDns);
+        for (const rawUrl of ["file:///etc/passwd", "ftp://example.com/v1"]) {
+            await expect(safeFetch(rawUrl)).rejects.toThrow("custom_url must use http:// or https://");
+            await expect(pinnedHttpTransport(new Request(rawUrl), ["93.184.216.34"])).rejects.toThrow(
+                "custom_url must use http:// or https://",
+            );
+        }
+    });
+
+    test("aborts an in-flight request before response headers arrive", async () => {
+        let markRequestArrived: (() => void) | undefined;
+        const requestArrived = new Promise<void>((resolve) => {
+            markRequestArrived = resolve;
+        });
+        const { server, port } = await listenOnLoopback("127.0.0.1", (_req, _res) => {
+            markRequestArrived?.();
+        });
+
+        try {
+            const controller = new AbortController();
+            const safeFetch = createSafeCustomFetch(defaultDnsResolve);
+            const pending = safeFetch(`http://127.0.0.1:${port}/slow-headers`, {
+                signal: controller.signal,
+            });
+
+            await requestArrived;
+            controller.abort(new DOMException("Aborted before headers", "AbortError"));
+
+            await expect(pending).rejects.toThrow("Aborted before headers");
+        } finally {
+            await closeServer(server);
+        }
+    });
+
+    test("aborts an in-flight response body stream mid-response", async () => {
+        const { server, port } = await listenOnLoopback("127.0.0.1", (_req, res) => {
+            res.writeHead(200, { "content-type": "text/plain" });
+            res.flushHeaders();
+            res.write("first-chunk");
+        });
+
+        try {
+            const controller = new AbortController();
+            const safeFetch = createSafeCustomFetch(defaultDnsResolve);
+            const response = await safeFetch(`http://127.0.0.1:${port}/stream`, {
+                signal: controller.signal,
+            });
+            expect(response.status).toBe(200);
+
+            const reader = response.body?.getReader();
+            expect(reader).toBeDefined();
+            if (!reader) {
+                throw new Error("Expected readable response body");
+            }
+
+            const first = await reader.read();
+            expect(first.done).toBeFalse();
+            expect(new TextDecoder().decode(first.value)).toBe("first-chunk");
+
+            controller.abort(new DOMException("Aborted mid-stream", "AbortError"));
+            await expect(reader.read()).rejects.toThrow("Aborted mid-stream");
+        } finally {
+            await closeServer(server);
+        }
+    });
+
+    test("returns empty body without hanging for 204 responses and HEAD requests", async () => {
+        const { server, port } = await listenOnLoopback("127.0.0.1", (req, res) => {
+            if (req.url === "/no-content") {
+                res.writeHead(204, { "x-status": "empty" });
+                res.end();
+                return;
+            }
+            if (req.method === "HEAD") {
+                res.writeHead(200, { "content-length": "42", "x-method": "HEAD" });
+                res.end();
+                return;
+            }
+            res.writeHead(404);
+            res.end();
+        });
+
+        try {
+            const safeFetch = createSafeCustomFetch(defaultDnsResolve);
+
+            const noContent = await safeFetch(`http://127.0.0.1:${port}/no-content`);
+            expect(noContent.status).toBe(204);
+            expect(noContent.headers.get("x-status")).toBe("empty");
+            expect(noContent.body).toBeNull();
+            expect(await noContent.text()).toBe("");
+
+            const headResponse = await safeFetch(`http://127.0.0.1:${port}/head`, { method: "HEAD" });
+            expect(headResponse.status).toBe(200);
+            expect(headResponse.headers.get("x-method")).toBe("HEAD");
+            expect(headResponse.body).toBeNull();
+            expect(await headResponse.text()).toBe("");
+        } finally {
+            await closeServer(server);
+        }
+    });
+
+    test("rejects body reading when a chunked response socket closes prematurely", async () => {
+        const { server, port } = await listenOnLoopback("127.0.0.1", (_req, res) => {
+            res.writeHead(200, {
+                "content-type": "text/plain",
+                "transfer-encoding": "chunked",
+            });
+            res.write("partial-body", () => {
+                res.socket?.destroy();
+            });
+        });
+
+        try {
+            const safeFetch = createSafeCustomFetch(defaultDnsResolve);
+            const response = await safeFetch(`http://127.0.0.1:${port}/truncated`);
+            expect(response.status).toBe(200);
+            await expect(response.text()).rejects.toThrow(/aborted|Response stream closed prematurely/i);
+        } finally {
+            await closeServer(server);
+        }
+    });
+
+    test("rejects body reading with premature close error when response closes with complete false", async () => {
+        const requestSpy = spyOn(http, "request").mockImplementation((() => {
+            const reqEmitter = new EventEmitter() as EventEmitter & {
+                destroy: () => void;
+                end: () => void;
+            };
+            reqEmitter.destroy = () => undefined;
+            reqEmitter.end = () => {
+                queueMicrotask(() => {
+                    const resEmitter = new EventEmitter() as EventEmitter & {
+                        complete: boolean;
+                        destroy: () => void;
+                        pause: () => void;
+                        rawHeaders: string[];
+                        resume: () => void;
+                        statusCode: number;
+                        statusMessage: string;
+                    };
+                    resEmitter.statusCode = 200;
+                    resEmitter.statusMessage = "OK";
+                    resEmitter.rawHeaders = ["content-type", "text/plain"];
+                    resEmitter.complete = false;
+                    resEmitter.pause = () => undefined;
+                    resEmitter.resume = () => undefined;
+                    resEmitter.destroy = () => undefined;
+
+                    reqEmitter.emit("response", resEmitter);
+                    queueMicrotask(() => {
+                        resEmitter.emit("data", Buffer.from("partial"));
+                        resEmitter.emit("close");
+                    });
+                });
+            };
+            return reqEmitter as unknown as http.ClientRequest;
+        }) as typeof http.request);
+
+        try {
+            const response = await pinnedHttpTransport(new Request("http://127.0.0.1:8080/truncated"), ["127.0.0.1"]);
+            expect(response.status).toBe(200);
+            await expect(response.text()).rejects.toThrow("Response stream closed prematurely");
+        } finally {
+            requestSpy.mockRestore();
+        }
+    });
+
+    test("passes TLS servername for hostnames and omits it for IP literals on https requests", async () => {
+        const capturedOptions: https.RequestOptions[] = [];
+        const requestSpy = spyOn(https, "request").mockImplementation(((options: unknown) => {
+            capturedOptions.push(options as https.RequestOptions);
+            const emitter = new EventEmitter() as EventEmitter & {
+                destroy: () => void;
+                end: () => void;
+            };
+            emitter.destroy = () => undefined;
+            emitter.end = () => {
+                queueMicrotask(() => {
+                    emitter.emit("error", new Error("intercepted tls request"));
+                });
+            };
+            return emitter as unknown as http.ClientRequest;
+        }) as typeof https.request);
+
+        try {
+            await expect(
+                pinnedHttpTransport(new Request("https://api.example.com/v1/models"), ["93.184.216.34"]),
+            ).rejects.toThrow("intercepted tls request");
+
+            await expect(
+                pinnedHttpTransport(new Request("https://93.184.216.34/v1/models"), ["93.184.216.34"]),
+            ).rejects.toThrow("intercepted tls request");
+
+            await expect(
+                pinnedHttpTransport(new Request("https://[2606:4700:4700::1111]/v1/models"), ["2606:4700:4700::1111"]),
+            ).rejects.toThrow("intercepted tls request");
+
+            expect(requestSpy).toHaveBeenCalledTimes(3);
+            expect(capturedOptions[0]?.servername).toBe("api.example.com");
+            expect(capturedOptions[0]?.port).toBe(443);
+            expect(capturedOptions[1]).not.toHaveProperty("servername");
+            expect(capturedOptions[2]).not.toHaveProperty("servername");
+        } finally {
+            requestSpy.mockRestore();
+        }
     });
 });

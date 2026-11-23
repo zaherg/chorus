@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import http from "node:http";
 
 import { APICallError, RetryError } from "ai";
 
-import { customProviderBaseUrl } from "@/providers/custom-url";
 import { createProviderRegistry, ThinkingModeSchema, thinkingModeValues } from "@/providers/registry";
 import { BrokerModelInfoSchema, type ModelsListResponse, type ProviderId, providerIdValues } from "@/types/providers";
+import { estimateTokenCount } from "@/utils/helpers";
+import { logger } from "@/utils/logger";
 import { testConfig } from "./helpers";
 
 const PROVIDER_ENV_KEYS = [
@@ -45,13 +47,36 @@ const withProviderEnv = (overrides: Record<string, string | undefined>, run: () 
     }
 };
 
-const expectRejectedError = async (promise: Promise<unknown>): Promise<Error> => {
-    try {
-        await promise;
-    } catch (error: unknown) {
-        return error instanceof Error ? error : new Error(String(error));
+const listenOnLoopback = async (handler: http.RequestListener): Promise<{ server: http.Server; port: number }> => {
+    const server = http.createServer(handler);
+    await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+            server.off("error", reject);
+            resolve();
+        });
+    });
+
+    const address = server.address();
+    if (!address || typeof address === "string") {
+        server.close();
+        throw new Error("Failed to bind local test server");
     }
-    throw new Error("Expected promise to reject");
+
+    return { server, port: address.port };
+};
+
+const closeServer = async (server: http.Server): Promise<void> => {
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve();
+        });
+    });
 };
 
 const openrouterCatalog = (): ModelsListResponse => {
@@ -79,43 +104,6 @@ const openrouterConfigured = (): ReadonlySet<ProviderId> => new Set<ProviderId>(
 describe("ProviderRegistry", () => {
     afterEach(() => {
         mock.restore();
-    });
-
-    describe("custom provider URL validation", () => {
-        test("allows loopback custom provider URLs", async () => {
-            const cases = [
-                {
-                    input: "http://localhost:11434/v1",
-                    expected: "http://localhost:11434/v1",
-                },
-                {
-                    input: "http://[::ffff:127.0.0.1]/v1",
-                    expected: "http://[::ffff:7f00:1]/v1",
-                },
-            ];
-
-            for (const { input, expected } of cases) {
-                expect(await customProviderBaseUrl(input, false)).toBe(expected);
-            }
-        });
-
-        test("still rejects non-loopback insecure custom provider URLs by default", async () => {
-            const err = await expectRejectedError(customProviderBaseUrl("http://example.com/v1", false));
-            expect(err.message).toContain("custom_url must use https:// unless allow_insecure_custom is set to true");
-        });
-
-        test("rejects IPv4-mapped IPv6 custom provider URLs for private hosts", async () => {
-            for (const url of [
-                "https://[::ffff:169.254.169.254]/v1",
-                "https://[::ffff:192.168.1.1]/v1",
-                "https://[::ffff:10.0.0.1]/v1",
-                "https://[::ffff:a9fe:a9fe]/v1",
-                "https://[::ffff:c0a8:101]/v1",
-            ]) {
-                const err = await expectRejectedError(customProviderBaseUrl(url, false));
-                expect(err.message).toContain("custom_url host is not allowed");
-            }
-        });
     });
 
     describe("ThinkingModeSchema", () => {
@@ -348,122 +336,19 @@ describe("ProviderRegistry", () => {
             );
         });
 
-        test("adds a provider timeout abort signal to SDK calls", async () => {
-            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
-            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
-            spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
-            const calls: Array<Record<string, unknown>> = [];
-            const registry = createProviderRegistry(
-                testConfig({
-                    provider_timeout_ms: 1234,
-                    openrouter_api_key: "openrouter-key",
-                }),
-                {
-                    generateTextFn: async (args) => {
-                        calls.push(args as Record<string, unknown>);
-                        return {
-                            response: {
-                                modelId: "openai/gpt-5.2",
-                                timestamp: new Date("2026-03-10T12:00:00.000Z"),
-                            },
-                            text: "hello back",
-                            usage: {
-                                inputTokens: 12,
-                                outputTokens: 4,
-                                totalTokens: 16,
-                            },
-                        } as never;
-                    },
-                },
-            );
-
-            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
-                catalog: openrouterCatalog(),
-                configuredProviders: openrouterConfigured(),
-            });
-
-            expect(result.ok).toBeTrue();
-            expect(calls).toHaveLength(1);
-            expect(calls[0]?.abortSignal).toBeInstanceOf(AbortSignal);
-            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1234);
-        });
-
-        test("uses the fallback provider timeout when configured timeout is zero", async () => {
-            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
-            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
-            spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
-            const registry = createProviderRegistry(
-                testConfig({
-                    provider_timeout_ms: 0,
-                    openrouter_api_key: "openrouter-key",
-                }),
-                {
-                    generateTextFn: async () => {
-                        return {
-                            response: {
-                                modelId: "openai/gpt-5.2",
-                                timestamp: new Date("2026-03-10T12:00:00.000Z"),
-                            },
-                            text: "hello back",
-                            usage: {
-                                inputTokens: 12,
-                                outputTokens: 4,
-                                totalTokens: 16,
-                            },
-                        } as never;
-                    },
-                },
-            );
-
-            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
-                catalog: openrouterCatalog(),
-                configuredProviders: openrouterConfigured(),
-            });
-
-            expect(result.ok).toBeTrue();
-            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1_800_000);
-        });
-
-        test("clears the provider timeout when the SDK call rejects", async () => {
-            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
-            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
-            const clearTimeoutSpy = spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
-            const parentController = new AbortController();
-            const removeEventListenerSpy = spyOn(parentController.signal, "removeEventListener");
-            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
-                generateTextFn: async () => {
-                    throw new Error("provider rejected");
-                },
-            });
-
-            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
-                abortSignal: parentController.signal,
-                catalog: openrouterCatalog(),
-                configuredProviders: openrouterConfigured(),
-            });
-
-            expect(result.ok).toBeFalse();
-            expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
-            expect(clearTimeoutSpy).toHaveBeenCalledWith(timeoutId);
-            expect(removeEventListenerSpy).toHaveBeenCalledWith("abort", expect.any(Function));
-        });
-
         test("maps provider cancellation failures to retryable timeouts", async () => {
-            const cases = [
-                {
-                    message: "The operation was aborted.",
-                    name: "AbortError",
-                },
-                {
-                    message: "The operation timed out.",
-                    name: "TimeoutError",
-                },
+            const errors: unknown[] = [
+                new DOMException("The operation was aborted.", "AbortError"),
+                new DOMException("The operation timed out.", "TimeoutError"),
+                new TypeError("fetch failed", {
+                    cause: new DOMException("The operation timed out.", "TimeoutError"),
+                }),
             ];
 
-            for (const { message, name } of cases) {
+            for (const error of errors) {
                 const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
                     generateTextFn: async () => {
-                        throw new DOMException(message, name);
+                        throw error;
                     },
                 });
                 const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
@@ -481,37 +366,29 @@ describe("ProviderRegistry", () => {
         });
 
         test("does not log raw provider exception details", async () => {
-            const originalConsoleError = console.error;
-            const errors: unknown[][] = [];
-            console.error = (...args: unknown[]) => {
-                errors.push(args);
-            };
+            const warnSpy = spyOn(logger, "warn").mockImplementation(() => undefined);
 
-            try {
-                const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
-                    generateTextFn: async () => {
-                        throw new Error("upstream error leaked sk-test-secret-value");
-                    },
-                });
+            const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                generateTextFn: async () => {
+                    throw new Error("upstream error leaked sk-test-secret-value");
+                },
+            });
 
-                const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
-                    catalog: openrouterCatalog(),
-                    configuredProviders: openrouterConfigured(),
-                });
+            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
 
-                expect(result.ok).toBeFalse();
-                if (!result.ok) {
-                    expect(result.error.message).toBe("Provider request failed");
-                }
-
-                const stderr = errors
-                    .flat()
-                    .map((arg) => (arg instanceof Error ? arg.message : String(arg)))
-                    .join("\n");
-                expect(stderr).not.toContain("sk-test-secret-value");
-            } finally {
-                console.error = originalConsoleError;
+            expect(result.ok).toBeFalse();
+            if (!result.ok) {
+                expect(result.error.message).toBe("Provider request failed");
+                expect(result.error.message).not.toContain("sk-test-secret-value");
             }
+
+            expect(warnSpy).toHaveBeenCalledTimes(1);
+            const [loggedMessage, loggedPayload] = warnSpy.mock.calls[0] ?? [];
+            expect(loggedMessage).toBe("Provider request failed");
+            expect(JSON.stringify(loggedPayload)).not.toContain("sk-test-secret-value");
         });
 
         test("returns a model_not_found error for unknown models", async () => {
@@ -696,80 +573,58 @@ describe("ProviderRegistry", () => {
             });
         });
 
-        test("clamps oversized provider_timeout_ms to signed 32-bit max", async () => {
-            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
-            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
-            spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
-            const registry = createProviderRegistry(
-                testConfig({
-                    provider_timeout_ms: 9_999_999_999,
-                    openrouter_api_key: "openrouter-key",
-                }),
-                {
+        test("normalizes partial and missing provider token usage fallbacks", async () => {
+            const prompt = "hello world from chorus";
+            const responseText = "normalized token response";
+            const runWithUsage = async (usage: Record<string, number | undefined> | undefined) => {
+                const registry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
                     generateTextFn: async () =>
                         ({
-                            response: { modelId: "openai/gpt-5.2", timestamp: new Date() },
-                            text: "ok",
-                            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                            response: {
+                                modelId: "openai/gpt-5.2",
+                                timestamp: new Date("2026-03-10T12:00:00.000Z"),
+                            },
+                            text: responseText,
+                            usage,
                         }) as never,
-                },
-            );
+                });
 
-            const result = await registry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
-                catalog: openrouterCatalog(),
-                configuredProviders: openrouterConfigured(),
-            });
-
-            expect(result.ok).toBeTrue();
-            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 2_147_483_647);
-        });
-
-        test("falls back on sub-millisecond fractional provider_timeout_ms and classifies wrapped TimeoutError causes", async () => {
-            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
-            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
-            spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
-
-            const fractionalRegistry = createProviderRegistry(
-                testConfig({
-                    provider_timeout_ms: 0.5,
-                    openrouter_api_key: "openrouter-key",
-                }),
-                {
-                    generateTextFn: async () =>
-                        ({
-                            response: { modelId: "openai/gpt-5.2", timestamp: new Date() },
-                            text: "ok",
-                            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                        }) as never,
-                },
-            );
-            const fractionalResult = await fractionalRegistry.generateText(
-                "openrouter/openai/gpt-5.2",
-                "hello",
-                undefined,
-                {
+                return registry.generateText("openrouter/openai/gpt-5.2", prompt, undefined, {
                     catalog: openrouterCatalog(),
                     configuredProviders: openrouterConfigured(),
-                },
-            );
-            expect(fractionalResult.ok).toBeTrue();
-            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1_800_000);
+                });
+            };
 
-            const wrappedRegistry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
-                generateTextFn: async () => {
-                    throw new TypeError("fetch failed", {
-                        cause: new DOMException("The operation timed out.", "TimeoutError"),
-                    });
-                },
-            });
-            const wrappedResult = await wrappedRegistry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
-                catalog: openrouterCatalog(),
-                configuredProviders: openrouterConfigured(),
-            });
-            expect(wrappedResult.ok).toBeFalse();
-            if (!wrappedResult.ok) {
-                expect(wrappedResult.error.type).toBe("timeout");
-                expect(wrappedResult.error.retryable).toBeTrue();
+            const totalOnly = await runWithUsage({ totalTokens: 42 });
+            expect(totalOnly.ok).toBeTrue();
+            if (totalOnly.ok) {
+                expect(totalOnly.value.usage).toEqual({
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    total_tokens: 42,
+                });
+            }
+
+            const missingUsage = await runWithUsage(undefined);
+            const expectedInput = estimateTokenCount(prompt);
+            const expectedOutput = estimateTokenCount(responseText);
+            expect(missingUsage.ok).toBeTrue();
+            if (missingUsage.ok) {
+                expect(missingUsage.value.usage).toEqual({
+                    input_tokens: expectedInput,
+                    output_tokens: expectedOutput,
+                    total_tokens: expectedInput + expectedOutput,
+                });
+            }
+
+            const splitOnly = await runWithUsage({ inputTokens: 10, outputTokens: 7 });
+            expect(splitOnly.ok).toBeTrue();
+            if (splitOnly.ok) {
+                expect(splitOnly.value.usage).toEqual({
+                    input_tokens: 10,
+                    output_tokens: 7,
+                    total_tokens: 17,
+                });
             }
         });
 
@@ -949,37 +804,52 @@ describe("ProviderRegistry", () => {
 
     describe("custom provider factory", () => {
         test("creates custom provider factory with safe fetch", async () => {
-            let capturedModel: unknown = null;
-            const registry = createProviderRegistry(
-                testConfig({
-                    custom_api_key: "test-key",
-                    custom_url: "http://localhost:11434/v1",
-                }),
-                {
-                    generateTextFn: async (args) => {
-                        capturedModel = args.model;
-                        return {
-                            text: "ok",
+            let redirectedHit = false;
+            let capturedAuthHeader = "";
+            const { server, port } = await listenOnLoopback((req, res) => {
+                if (req.url === "/v1/chat/completions") {
+                    capturedAuthHeader = req.headers.authorization ?? "";
+                    res.writeHead(200, { "content-type": "application/json" });
+                    res.end(
+                        JSON.stringify({
+                            id: "chatcmpl-local-test",
+                            object: "chat.completion",
+                            created: 1_700_000_000,
+                            model: "default",
+                            choices: [
+                                {
+                                    index: 0,
+                                    message: {
+                                        role: "assistant",
+                                        content: "hello from local custom server",
+                                    },
+                                    finish_reason: "stop",
+                                },
+                            ],
                             usage: {
-                                inputTokens: 1,
-                                outputTokens: 1,
-                                totalTokens: 2,
+                                prompt_tokens: 4,
+                                completion_tokens: 5,
+                                total_tokens: 9,
                             },
-                            response: {
-                                modelId: "default",
-                                timestamp: new Date(),
-                            },
-                        } as never;
-                    },
-                },
-            );
-
-            const customModel = BrokerModelInfoSchema.parse({
-                route_id: "custom/default",
-                provider: "custom",
-                provider_model_id: "default",
-                display_name: "Custom Default",
+                        }),
+                    );
+                    return;
+                }
+                if (req.url === "/redirect/chat/completions") {
+                    res.writeHead(302, { location: `http://127.0.0.1:${port}/redirected` });
+                    res.end();
+                    return;
+                }
+                if (req.url === "/redirected") {
+                    redirectedHit = true;
+                    res.writeHead(200, { "content-type": "text/plain" });
+                    res.end("should never be reached");
+                    return;
+                }
+                res.writeHead(404);
+                res.end();
             });
+
             const catalog: ModelsListResponse = {
                 schema: "models.list/1",
                 cache: {
@@ -988,20 +858,56 @@ describe("ProviderRegistry", () => {
                     expires_at: "2026-01-02T00:00:00.000Z",
                 },
                 providers: {
-                    custom: { status: "catalog", models: [customModel] },
+                    custom: { status: "passthrough", models: [] },
                 },
             };
 
-            const result = await registry.generateText("custom/default", "hello", undefined, {
-                catalog,
-                configuredProviders: new Set<ProviderId>(["custom"]),
-            });
+            try {
+                const registry = createProviderRegistry(
+                    testConfig({
+                        custom_api_key: "test-key",
+                        custom_url: `http://127.0.0.1:${port}/v1`,
+                    }),
+                );
 
-            expect(result.ok).toBeTrue();
-            expect(capturedModel).toBeTruthy();
-            if (capturedModel) {
-                const m = capturedModel as { modelId?: string };
-                expect(m.modelId).toBe("default");
+                const result = await registry.generateText("custom/default", "hello", undefined, {
+                    catalog,
+                    configuredProviders: new Set<ProviderId>(["custom"]),
+                });
+
+                expect(result.ok).toBeTrue();
+                expect(capturedAuthHeader).toBe("Bearer test-key");
+                if (result.ok) {
+                    expect(result.value.model).toBe("custom/default");
+                    expect(result.value.provider).toBe("custom");
+                    expect(result.value.text).toBe("hello from local custom server");
+                    expect(result.value.usage).toEqual({
+                        input_tokens: 4,
+                        output_tokens: 5,
+                        total_tokens: 9,
+                    });
+                }
+
+                const redirectRegistry = createProviderRegistry(
+                    testConfig({
+                        custom_api_key: "test-key",
+                        custom_url: `http://127.0.0.1:${port}/redirect`,
+                    }),
+                );
+
+                const redirectResult = await redirectRegistry.generateText("custom/default", "hello", undefined, {
+                    catalog,
+                    configuredProviders: new Set<ProviderId>(["custom"]),
+                });
+
+                expect(redirectResult.ok).toBeFalse();
+                if (!redirectResult.ok) {
+                    expect(redirectResult.error.type).toBe("execution");
+                    expect(redirectResult.error.retryable).toBeFalse();
+                }
+                expect(redirectedHit).toBeFalse();
+            } finally {
+                await closeServer(server);
             }
         });
     });

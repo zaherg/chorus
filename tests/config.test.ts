@@ -1,14 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { ZodError } from "zod/v4";
 
-import { loadConfig, wasExpandedFromEnv } from "@/config";
+import { loadConfig as realLoadConfig, wasExpandedFromEnv } from "@/config";
 import { isProviderConfigured } from "@/providers/registry";
+import { captureOutput } from "./helpers";
 
 let tempDir: string;
+
+const loadConfig = () => realLoadConfig({ configDir: join(tempDir, ".config", "chorus") });
 
 const expectRejectedError = async (promise: Promise<unknown>): Promise<Error> => {
     try {
@@ -45,15 +48,10 @@ const withEnv = async <T>(overrides: Record<string, string | undefined>, run: ()
 
 beforeEach(() => {
     tempDir = mkdtempSync(resolve(tmpdir(), "chorus-config-test-"));
-    mock.module("node:os", () => ({
-        ...require("node:os"),
-        homedir: () => tempDir,
-    }));
 });
 
 afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
-    mock.restore();
 });
 
 describe("loadConfig", () => {
@@ -239,6 +237,25 @@ describe("loadConfig", () => {
         }
     });
 
+    it("fails validation when custom_api_key is set but custom_url is missing or empty", async () => {
+        const configDir = join(tempDir, ".config", "chorus");
+        const configPath = join(configDir, "config.json");
+        mkdirSync(configDir, { recursive: true });
+
+        for (const payload of [
+            { custom_api_key: "sk-custom-key" },
+            { custom_api_key: "sk-custom-key", custom_url: "" },
+        ]) {
+            writeFileSync(configPath, JSON.stringify(payload));
+
+            const err = await expectRejectedError(loadConfig());
+            expect(err).toBeInstanceOf(ZodError);
+            if (err instanceof ZodError) {
+                expect(err.issues[0]?.path).toEqual(["custom_url"]);
+            }
+        }
+    });
+
     it("rejects non-object JSON payloads", async () => {
         const configDir = join(tempDir, ".config", "chorus");
         const configPath = join(configDir, "config.json");
@@ -313,10 +330,29 @@ describe("loadConfig", () => {
         });
     });
 
-    it("handles concurrent first-run default config creation safely", async () => {
-        const [first, second] = await Promise.all([loadConfig(), loadConfig()]);
-        expect(first.cli_timeout_ms).toBe(2_700_000);
-        expect(second.cli_timeout_ms).toBe(2_700_000);
+    it("reuses existing config on repeated loadConfig calls without overwriting or re-emitting the first-run notice", async () => {
+        const configPath = join(tempDir, ".config", "chorus", "config.json");
+
+        const firstRun = await captureOutput(() => loadConfig());
+        expect(firstRun.result.cli_timeout_ms).toBe(2_700_000);
+        expect(firstRun.stderr).toContain(`Default config written to ${configPath}.`);
+
+        writeFileSync(
+            configPath,
+            JSON.stringify({
+                cli_timeout_ms: 90_000,
+                log_level: "warn",
+            }),
+        );
+
+        const secondRun = await captureOutput(() => loadConfig());
+        expect(secondRun.result.cli_timeout_ms).toBe(90_000);
+        expect(secondRun.result.log_level).toBe("warn");
+        expect(secondRun.stderr).toBe("");
+        expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
+            cli_timeout_ms: 90_000,
+            log_level: "warn",
+        });
     });
 
     it("skips chmod when config.json is a symlink", async () => {

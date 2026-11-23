@@ -28,6 +28,7 @@ import type { Result, ToolError } from "@/types/tools";
 import { clampTimeoutMs } from "@/utils/async";
 import { getErrorMessage } from "@/utils/helpers";
 import { configureLogging } from "@/utils/logger";
+import { redactSecrets } from "@/utils/redact";
 import { parseCliOptions } from "./cli-options";
 
 export const DEFAULT_STDIN_MAX_BYTES = 10 * 1024 * 1024;
@@ -103,7 +104,7 @@ export const readStdinBounded = async (stream: ReadableStdin, options: ReadStdin
     }
 };
 
-const StdinConsensusSchema = z
+export const StdinConsensusSchema = z
     .object({
         models: z.array(z.string().trim().min(1)).min(1),
         prompt: z.string().refine((s) => s.trim().length > 0, "prompt must be non-empty"),
@@ -323,16 +324,32 @@ const brokerError = (
     printError({
         ok: false,
         schema: "cli.consensus.error/1",
-        error: { code, message, ...(extra ?? {}) },
+        error: { code, message: redactSecrets(message), ...(extra ?? {}) },
     });
 };
+
+export interface ConsensusCommandDeps {
+    loadConfig?: typeof loadConfig;
+    configureLogging?: typeof configureLogging;
+    getConfigPaths?: typeof getConfigPaths;
+    loadCatalog?: typeof loadCatalog;
+    isProviderConfigured?: typeof isProviderConfigured;
+    createProviderRegistry?: typeof createProviderRegistry;
+    classifyInput?: typeof classifyInput;
+    resolveRoute?: typeof resolveRoute;
+    runConsensus?: typeof runConsensus;
+    fetchFn?: typeof globalThis.fetch;
+    stdin?: ReadableStdin;
+}
 
 const resolveOne = (
     input: string,
     options: ResolveRouteOptions,
+    classifyInputFn: typeof classifyInput = classifyInput,
+    resolveRouteFn: typeof resolveRoute = resolveRoute,
 ): { ok: true; value: BrokerModelInfo } | { ok: false; handled: boolean } => {
-    const classified = classifyInput(input);
-    const result = resolveRoute(classified, options);
+    const classified = classifyInputFn(input);
+    const result = resolveRouteFn(classified, options);
     if (result.ok) {
         return { ok: true, value: result.value };
     }
@@ -349,7 +366,18 @@ const resolveOne = (
     return { ok: false, handled: true };
 };
 
-export const runConsensusCommand = async (args: string[]) => {
+export const runConsensusCommand = async (args: string[], deps: ConsensusCommandDeps = {}) => {
+    const loadConfigFn = deps.loadConfig ?? loadConfig;
+    const configureLoggingFn = deps.configureLogging ?? configureLogging;
+    const getConfigPathsFn = deps.getConfigPaths ?? getConfigPaths;
+    const loadCatalogFn = deps.loadCatalog ?? loadCatalog;
+    const isProviderConfiguredFn = deps.isProviderConfigured ?? isProviderConfigured;
+    const createProviderRegistryFn = deps.createProviderRegistry ?? createProviderRegistry;
+    const classifyInputFn = deps.classifyInput ?? classifyInput;
+    const resolveRouteFn = deps.resolveRoute ?? resolveRoute;
+    const runConsensusFn = deps.runConsensus ?? runConsensus;
+    const fetchFn = deps.fetchFn ?? globalThis.fetch;
+    const stdinStream = deps.stdin ?? process.stdin;
     const parsed = parseConsensusArgs(args);
     if (!parsed.ok) {
         process.stderr.write(`${parsed.error.message}\n`);
@@ -382,9 +410,9 @@ export const runConsensusCommand = async (args: string[]) => {
     if (parsedArgs.mode === "stdin-json") {
         let stdinText: string;
         try {
-            stdinText = await readStdinBounded(process.stdin);
+            stdinText = await readStdinBounded(stdinStream);
         } catch (e) {
-            const message = getErrorMessage(e);
+            const message = redactSecrets(getErrorMessage(e));
             if (message.startsWith("stdin exceeds maximum size") || message.startsWith("timed out reading stdin")) {
                 process.stderr.write(`Error: ${message}\n`);
             } else {
@@ -397,7 +425,7 @@ export const runConsensusCommand = async (args: string[]) => {
         try {
             parsedStdin = StdinConsensusSchema.parse(JSON.parse(stdinText));
         } catch (e) {
-            process.stderr.write(`Error: Invalid --stdin-json input: ${getErrorMessage(e)}\n`);
+            process.stderr.write(`Error: Invalid --stdin-json input: ${redactSecrets(getErrorMessage(e))}\n`);
             return 2;
         }
         modelInputs = parsedStdin.models;
@@ -509,17 +537,17 @@ export const runConsensusCommand = async (args: string[]) => {
 
     let config: Awaited<ReturnType<typeof loadConfig>>;
     try {
-        config = await loadConfig();
-        await configureLogging(config.log_level);
+        config = await loadConfigFn();
+        await configureLoggingFn(config.log_level);
     } catch (e) {
-        process.stderr.write(`Error: Failed to load config: ${getErrorMessage(e)}\n`);
+        process.stderr.write(`Error: Failed to load config: ${redactSecrets(getErrorMessage(e))}\n`);
         return 1;
     }
 
-    const configDir = getConfigPaths().baseDir;
-    const catalog = await loadCatalog({
+    const configDir = getConfigPathsFn().baseDir;
+    const catalog = await loadCatalogFn({
         configDir,
-        fetchFn: globalThis.fetch,
+        fetchFn,
         reader: makeLocalFileReader(configDir),
         writer: makeLocalFileWriter(configDir),
     });
@@ -529,7 +557,7 @@ export const runConsensusCommand = async (args: string[]) => {
         return 1;
     }
 
-    const configuredProviders = new Set(providerIdValues.filter((id) => isProviderConfigured(id, config)));
+    const configuredProviders = new Set(providerIdValues.filter((id) => isProviderConfiguredFn(id, config)));
 
     const routeOptions = {
         catalog,
@@ -538,7 +566,7 @@ export const runConsensusCommand = async (args: string[]) => {
 
     const resolved: BrokerModelInfo[] = [];
     for (const input of modelInputs) {
-        const r = resolveOne(input, routeOptions);
+        const r = resolveOne(input, routeOptions, classifyInputFn, resolveRouteFn);
         if (!r.ok) {
             return 3;
         }
@@ -568,7 +596,7 @@ export const runConsensusCommand = async (args: string[]) => {
     ]);
     const selectorRoutes = new Map<string, string>();
     for (const selector of activeSelectors) {
-        const resolution = resolveOne(selector, routeOptions);
+        const resolution = resolveOne(selector, routeOptions, classifyInputFn, resolveRouteFn);
         if (!resolution.ok) {
             return 3;
         }
@@ -620,8 +648,8 @@ export const runConsensusCommand = async (args: string[]) => {
     let resolvedSynthesisRouteId: string | undefined;
     let unresolvedSynthesisError: ParticipantError | null = null;
     if (synthesisModel) {
-        const classifiedSynth = classifyInput(synthesisModel);
-        const synthResult = resolveRoute(classifiedSynth, routeOptions);
+        const classifiedSynth = classifyInputFn(synthesisModel);
+        const synthResult = resolveRouteFn(classifiedSynth, routeOptions);
         if (synthResult.ok) {
             resolvedSynthesisRouteId = synthResult.value.route_id;
         } else {
@@ -669,8 +697,8 @@ export const runConsensusCommand = async (args: string[]) => {
     const cliTimeoutMs = clampTimeoutMs(config.cli_timeout_ms, DEFAULT_CLI_TIMEOUT_MS);
     const cliTimeout = setTimeout(() => abortController.abort(), cliTimeoutMs);
     try {
-        result = await runConsensus({
-            providerRegistry: createProviderRegistry(config),
+        result = await runConsensusFn({
+            providerRegistry: createProviderRegistryFn(config),
             catalog,
             configuredProviders,
             models,

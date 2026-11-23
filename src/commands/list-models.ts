@@ -13,6 +13,7 @@ import {
 import type { Result, ToolError } from "@/types/tools";
 import { getErrorMessage } from "@/utils/helpers";
 import { configureLogging } from "@/utils/logger";
+import { redactSecrets } from "@/utils/redact";
 import { parseCliOptions } from "./cli-options";
 
 const LIST_MODELS_BOOLEAN_OPTIONS = ["json", "refresh", "help"] as const;
@@ -133,14 +134,24 @@ const formatHuman = (response: ModelsListResponse, warning: string | undefined) 
 
 const formatHumanError = (message: string) => `Error: ${message}\n`;
 
+export interface ListModelsCommandDeps {
+    loadConfig?: typeof loadConfig;
+    configureLogging?: typeof configureLogging;
+    getConfigPaths?: typeof getConfigPaths;
+    loadCatalog?: typeof loadCatalog;
+    isProviderConfigured?: typeof isProviderConfigured;
+    fetchFn?: typeof globalThis.fetch;
+}
+
 const filterConfiguredProviders = (
     response: ModelsListResponse,
     config: Awaited<ReturnType<typeof loadConfig>>,
+    checkConfigured: typeof isProviderConfigured = isProviderConfigured,
 ): ModelsListResponse => {
     const filtered: Partial<Record<ProviderId, ProviderListEntry>> = {};
     for (const providerId of providerIdValues) {
         const entry = response.providers[providerId];
-        if (!entry || !isProviderConfigured(providerId, config)) {
+        if (!entry || !checkConfigured(providerId, config)) {
             continue;
         }
         filtered[providerId] = entry;
@@ -187,7 +198,14 @@ const applyModelFilter = (response: ModelsListResponse, filter: string | undefin
     return { ...response, providers };
 };
 
-export const runListModelsCommand = async (args: string[]) => {
+export const runListModelsCommand = async (args: string[], deps: ListModelsCommandDeps = {}) => {
+    const loadConfigFn = deps.loadConfig ?? loadConfig;
+    const configureLoggingFn = deps.configureLogging ?? configureLogging;
+    const getConfigPathsFn = deps.getConfigPaths ?? getConfigPaths;
+    const loadCatalogFn = deps.loadCatalog ?? loadCatalog;
+    const isProviderConfiguredFn = deps.isProviderConfigured ?? isProviderConfigured;
+    const fetchFn = deps.fetchFn ?? globalThis.fetch;
+
     const parsed = parseListModelsArgs(args);
     if (!parsed.ok) {
         process.stderr.write(`${parsed.error.message}\n`);
@@ -202,10 +220,10 @@ export const runListModelsCommand = async (args: string[]) => {
 
     let config: Awaited<ReturnType<typeof loadConfig>>;
     try {
-        config = await loadConfig();
-        await configureLogging(config.log_level);
+        config = await loadConfigFn();
+        await configureLoggingFn(config.log_level);
     } catch (e) {
-        const message = getErrorMessage(e);
+        const message = redactSecrets(getErrorMessage(e));
         if (json) {
             const payload: ModelsListError = {
                 schema: "models.list.error/1",
@@ -221,41 +239,48 @@ export const runListModelsCommand = async (args: string[]) => {
         return 1;
     }
 
-    const configDir = getConfigPaths().baseDir;
+    const configDir = getConfigPathsFn().baseDir;
     const reader = makeLocalFileReader(configDir);
     const writer = makeLocalFileWriter(configDir);
 
-    const result = await loadCatalog({
+    const result = await loadCatalogFn({
         configDir,
-        fetchFn: globalThis.fetch,
+        fetchFn,
         reader,
         writer,
         forceRefresh: refresh,
     });
 
     if (!result.ok) {
+        const errorMessage = redactSecrets(result.error.message);
         if (json) {
             const payload: ModelsListError = {
                 schema: "models.list.error/1",
                 error: {
                     code: "catalog_unavailable",
-                    message: result.error.message,
+                    message: errorMessage,
                 },
             };
             process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
         } else {
-            process.stderr.write(formatHumanError(result.error.message));
+            process.stderr.write(formatHumanError(errorMessage));
         }
         return 1;
     }
 
+    const warning = result.warning !== undefined ? redactSecrets(result.warning) : undefined;
     const cache =
-        result.warning !== undefined
+        warning !== undefined
             ? {
                   ...result.cache,
-                  warning: result.warning,
+                  warning,
               }
-            : result.cache;
+            : result.cache.warning !== undefined
+              ? {
+                    ...result.cache,
+                    warning: redactSecrets(result.cache.warning),
+                }
+              : result.cache;
 
     const filtered = applyModelFilter(
         filterConfiguredProviders(
@@ -265,6 +290,7 @@ export const runListModelsCommand = async (args: string[]) => {
                 providers: result.providers,
             },
             config,
+            isProviderConfiguredFn,
         ),
         filter,
     );
@@ -272,7 +298,7 @@ export const runListModelsCommand = async (args: string[]) => {
     if (json) {
         process.stdout.write(`${JSON.stringify(filtered, null, 2)}\n`);
     } else {
-        process.stdout.write(formatHuman(filtered, result.warning ?? filtered.cache.warning));
+        process.stdout.write(formatHuman(filtered, warning ?? filtered.cache.warning));
     }
     return 0;
 };

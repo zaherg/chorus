@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { parseListModelsArgs, runListModelsCommand } from "@/commands/list-models";
-import * as realConfig from "@/config";
-import * as realModelCatalog from "@/providers/model-catalog";
-import * as realRegistry from "@/providers/registry";
+import { parseListModelsArgs, runListModelsCommand as realRunListModelsCommand } from "@/commands/list-models";
+import { loadConfig as realLoadConfig } from "@/config";
+import { type LoadCatalogSuccess, loadCatalog as realLoadCatalog } from "@/providers/model-catalog";
+import { isProviderConfigured as realIsProviderConfigured } from "@/providers/registry";
 import {
     BrokerModelInfoSchema,
     ModelsListErrorSchema,
@@ -12,45 +12,27 @@ import {
     type ProviderId,
     type ProviderListEntry,
 } from "@/types/providers";
-import * as realLogger from "@/utils/logger";
+import { configureLogging as realConfigureLogging } from "@/utils/logger";
 import { captureOutput, testConfig } from "./helpers";
 
-const realConfigSnapshot = { ...realConfig };
-const realLoggerSnapshot = { ...realLogger };
-const realRegistrySnapshot = { ...realRegistry };
-const realModelCatalogSnapshot = { ...realModelCatalog };
+let loadConfigHandler: typeof realLoadConfig = realLoadConfig;
+let configureLoggingHandler: typeof realConfigureLogging = realConfigureLogging;
+let isProviderConfiguredHandler: typeof realIsProviderConfigured = realIsProviderConfigured;
+let loadCatalogHandler: typeof realLoadCatalog = realLoadCatalog;
 
-let loadConfigHandler: typeof realConfig.loadConfig = realConfigSnapshot.loadConfig;
-let configureLoggingHandler: typeof realLogger.configureLogging = realLoggerSnapshot.configureLogging;
-let isProviderConfiguredHandler: typeof realRegistry.isProviderConfigured = realRegistrySnapshot.isProviderConfigured;
-let loadCatalogHandler: typeof realModelCatalog.loadCatalog = realModelCatalogSnapshot.loadCatalog;
-
-mock.module("@/config", () => ({
-    ...realConfigSnapshot,
-    loadConfig: (...args: Parameters<typeof realConfig.loadConfig>) => loadConfigHandler(...args),
-}));
-
-mock.module("@/utils/logger", () => ({
-    ...realLoggerSnapshot,
-    configureLogging: (...args: Parameters<typeof realLogger.configureLogging>) => configureLoggingHandler(...args),
-}));
-
-mock.module("@/providers/registry", () => ({
-    ...realRegistrySnapshot,
-    isProviderConfigured: (...args: Parameters<typeof realRegistry.isProviderConfigured>) =>
-        isProviderConfiguredHandler(...args),
-}));
-
-mock.module("@/providers/model-catalog", () => ({
-    ...realModelCatalogSnapshot,
-    loadCatalog: (...args: Parameters<typeof realModelCatalog.loadCatalog>) => loadCatalogHandler(...args),
-}));
+const runListModelsCommand = (args: string[]) =>
+    realRunListModelsCommand(args, {
+        loadConfig: (...callArgs) => loadConfigHandler(...callArgs),
+        configureLogging: (...callArgs) => configureLoggingHandler(...callArgs),
+        isProviderConfigured: (...callArgs) => isProviderConfiguredHandler(...callArgs),
+        loadCatalog: (...callArgs) => loadCatalogHandler(...callArgs),
+    });
 
 const resetHandlersToReal = (): void => {
-    loadConfigHandler = realConfigSnapshot.loadConfig;
-    configureLoggingHandler = realLoggerSnapshot.configureLogging;
-    isProviderConfiguredHandler = realRegistrySnapshot.isProviderConfigured;
-    loadCatalogHandler = realModelCatalogSnapshot.loadCatalog;
+    loadConfigHandler = realLoadConfig;
+    configureLoggingHandler = realConfigureLogging;
+    isProviderConfiguredHandler = realIsProviderConfigured;
+    loadCatalogHandler = realLoadCatalog;
 };
 
 type StubCatalogResponse = {
@@ -116,7 +98,7 @@ const stubLoadCatalog = (
     warning?: string,
 ): { calls: Array<{ forceRefresh: boolean }> } => {
     const calls: Array<{ forceRefresh: boolean }> = [];
-    const stubResult: realModelCatalog.LoadCatalogSuccess = {
+    const stubResult: LoadCatalogSuccess = {
         ok: true,
         schema: response.schema,
         cache: response.cache,
@@ -214,8 +196,8 @@ describe("runListModelsCommand", () => {
     beforeEach(() => {
         loadConfigHandler = async () => testConfig();
         configureLoggingHandler = async () => {};
-        isProviderConfiguredHandler = realRegistrySnapshot.isProviderConfigured;
-        loadCatalogHandler = realModelCatalogSnapshot.loadCatalog;
+        isProviderConfiguredHandler = realIsProviderConfigured;
+        loadCatalogHandler = realLoadCatalog;
     });
 
     afterEach(() => {
@@ -347,6 +329,21 @@ describe("runListModelsCommand", () => {
         expect(stdout).toContain("cache:");
     });
 
+    it("formats capability badges and the passthrough provider line in human-readable output", async () => {
+        stubLoadCatalog(buildResponse(fixtureProviders()));
+        stubConfiguredProviders(["anthropic", "openrouter", "azure", "custom"]);
+
+        const { result, stdout } = await captureOutput(() => runListModelsCommand([]));
+        expect(result).toBe(0);
+
+        expect(stdout).toContain(
+            "    - anthropic/claude-3-5-sonnet  Claude 3.5 Sonnet [ctx: 200000] [reasoning] [tools] [structured]",
+        );
+        expect(stdout).toContain("    - openrouter/openai/gpt-5.2  GPT-5.2 [ctx: 128000] [tools]");
+        expect(stdout).toContain("    - azure/gpt-4o  GPT-4o\n");
+        expect(stdout).toContain("  custom (passthrough)\n    (no catalog; use provider-prefixed IDs)");
+    });
+
     it("returns 2 and prints an unknown-flag error for unrecognized flags", async () => {
         const { result, stderr } = await captureOutput(() => runListModelsCommand(["--bogus"]));
         expect(result).toBe(2);
@@ -402,41 +399,76 @@ describe("runListModelsCommand", () => {
         expect(stderr).toContain("no cache and network failed");
     });
 
-    it("filters models by case-insensitive substring against route_id and display_name", async () => {
+    it("returns empty model lists when filter matches no models", async () => {
         stubLoadCatalog(buildResponse(fixtureProviders()));
         stubConfiguredProviders(["anthropic", "openrouter"]);
 
         const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json", "Kimi"]));
         expect(result).toBe(0);
 
-        const payload = JSON.parse(stdout);
-        expect(payload.providers.anthropic.models).toEqual([]);
-        expect(payload.providers.openrouter.models).toEqual([]);
+        const payload = ModelsListResponseSchema.parse(JSON.parse(stdout));
+        expect(payload.providers.anthropic?.models).toEqual([]);
+        expect(payload.providers.openrouter?.models).toEqual([]);
     });
 
-    it("returns matching models when filter substring is present in route_id", async () => {
-        const providers = fixtureProviders();
-        const kimiModel = BrokerModelInfoSchema.parse({
-            route_id: "openrouter/moonshotai/kimi-k2",
-            provider: "openrouter",
-            provider_model_id: "moonshotai/kimi-k2",
-            display_name: "Kimi K2",
-            canonical_model_id: "kimi-k2",
+    it("matches case-insensitive filter substrings independently on each searchable field", async () => {
+        const routeOnly = BrokerModelInfoSchema.parse({
+            route_id: "azure/plain-one",
+            provider: "azure",
+            provider_model_id: "plain-one",
+            display_name: "Plain One",
+            canonical_model_id: "canon-one",
         });
-        providers.openrouter = {
-            status: "catalog",
-            models: [...providers.openrouter.models, kimiModel],
+        const displayOnly = BrokerModelInfoSchema.parse({
+            route_id: "anthropic/plain-two",
+            provider: "anthropic",
+            provider_model_id: "plain-two",
+            display_name: "Zephyr Display Label",
+            canonical_model_id: "canon-two",
+        });
+        const providerModelOnly = BrokerModelInfoSchema.parse({
+            route_id: "openrouter/plain-three",
+            provider: "openrouter",
+            provider_model_id: "vendor/quartz-native",
+            display_name: "Plain Three",
+            canonical_model_id: "canon-three",
+        });
+        const canonicalOnly = BrokerModelInfoSchema.parse({
+            route_id: "openrouter/plain-four",
+            provider: "openrouter",
+            provider_model_id: "plain-four",
+            display_name: "Plain Four",
+            canonical_model_id: "canonical/cobalt-id",
+        });
+
+        const providers: Record<ProviderId, ProviderListEntry> = {
+            "amazon-bedrock": { status: "catalog", models: [] },
+            anthropic: { status: "catalog", models: [displayOnly] },
+            azure: { status: "catalog", models: [routeOnly] },
+            custom: { status: "passthrough", models: [] },
+            "google-vertex": { status: "catalog", models: [] },
+            openrouter: { status: "catalog", models: [providerModelOnly, canonicalOnly] },
         };
         stubLoadCatalog(buildResponse(providers));
-        stubConfiguredProviders(["openrouter", "anthropic"]);
+        stubConfiguredProviders(["azure", "anthropic", "openrouter"]);
 
-        const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json", "kimi"]));
-        expect(result).toBe(0);
+        const cases: ReadonlyArray<{ field: string; query: string; expectedRouteId: string }> = [
+            { field: "route_id", query: "AzUrE/", expectedRouteId: "azure/plain-one" },
+            { field: "display_name", query: "zEpHyR", expectedRouteId: "anthropic/plain-two" },
+            { field: "provider_model_id", query: "QuArTz", expectedRouteId: "openrouter/plain-three" },
+            { field: "canonical_model_id", query: "CoBaLt", expectedRouteId: "openrouter/plain-four" },
+        ];
 
-        const payload = JSON.parse(stdout);
-        expect(payload.providers.openrouter.models).toHaveLength(1);
-        expect(payload.providers.openrouter.models[0].route_id).toBe("openrouter/moonshotai/kimi-k2");
-        expect(payload.providers.anthropic.models).toEqual([]);
+        for (const { query, expectedRouteId } of cases) {
+            const { result, stdout } = await captureOutput(() => runListModelsCommand(["--json", query]));
+            expect(result).toBe(0);
+
+            const payload = ModelsListResponseSchema.parse(JSON.parse(stdout));
+            const matchedRouteIds = Object.values(payload.providers).flatMap((entry) =>
+                entry.models.map((model) => model.route_id),
+            );
+            expect(matchedRouteIds).toEqual([expectedRouteId]);
+        }
     });
 
     it("filters human-readable output to only matching models", async () => {
