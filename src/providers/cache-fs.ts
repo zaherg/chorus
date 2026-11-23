@@ -1,8 +1,10 @@
-import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-
 import { getErrorMessage } from "@/utils/helpers";
+import {
+    isErrnoException,
+    readPrivateFileNoFollow,
+    resolveConfinedPath,
+    writePrivateFileAtomic,
+} from "@/utils/private-fs";
 import type { FileReader, FileWriter } from "./model-catalog";
 
 /**
@@ -10,39 +12,23 @@ import type { FileReader, FileWriter } from "./model-catalog";
  * paths, null bytes, and any traversal that escapes `configDir`.
  */
 export const resolveCachePath = (configDir: string, relativePath: string): string => {
-    if (relativePath.includes("\0")) {
-        throw new Error(`Invalid cache path: ${relativePath}`);
-    }
-    if (isAbsolute(relativePath)) {
-        throw new Error(`Cache path must be relative to configDir: ${relativePath}`);
-    }
-    const root = resolve(configDir);
-    const resolved = resolve(root, relativePath);
-    const rel = relative(root, resolved);
-    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-        throw new Error(`Cache path escapes configDir: ${relativePath}`);
-    }
-    return resolved;
+    return resolveConfinedPath(configDir, relativePath, "Cache path");
 };
 
 /**
- * Builds a production `FileReader` that reads from the local filesystem
- * under `configDir`. Missing files return `{ ok: false, code: "missing" }`;
- * any other I/O error returns `{ ok: false, code: "io_error" }`.
+ * Builds a `FileReader` bound to `configDir` that refuses to follow symlinks.
  *
- * Assumes the system clock is reasonably accurate (file timestamps and
- * stored `fetched_at`/`expires_at` values are compared against it).
- * Clock drift in containerized environments can skew stale-while-revalidate
- * behavior (treating fresh data as stale or vice versa).
+ * Returns `{ ok: true, text }` on success, `{ ok: false, code: "missing" }` on
+ * `ENOENT`, and `{ ok: false, code: "io_error" }` on symlink escapes or other
+ * I/O failures.
  */
 export const makeLocalFileReader = (configDir: string): FileReader => {
     return (path) => {
         const absolute = resolveCachePath(configDir, path);
         try {
-            return { ok: true, text: readFileSync(absolute, "utf-8") };
+            return { ok: true, text: readPrivateFileNoFollow(absolute, { rootDir: configDir }) };
         } catch (err) {
-            const code = (err as NodeJS.ErrnoException).code;
-            if (code === "ENOENT") {
+            if (isErrnoException(err) && err.code === "ENOENT") {
                 return { ok: false, code: "missing" };
             }
             return { ok: false, code: "io_error" };
@@ -51,36 +37,21 @@ export const makeLocalFileReader = (configDir: string): FileReader => {
 };
 
 /**
- * Builds a production `FileWriter` that writes to the local filesystem
- * under `configDir` using an atomic temp+rename sequence. The default file
- * mode is `0o600`; the default temp suffix is `.tmp`.
+ * Builds an atomic `FileWriter` bound to `configDir`. Ensures `0700` cache
+ * directories, rejects symlink escapes, stages via a unique `wx` temp file,
+ * and renames into place.
  */
 export const makeLocalFileWriter = (configDir: string): FileWriter => {
     return (path, content, options) => {
         const absolute = resolveCachePath(configDir, path);
-        let tempPath: string | undefined;
         try {
-            mkdirSync(dirname(absolute), { recursive: true, mode: 0o700 });
-            const tempSuffix = options?.tempSuffix ?? ".tmp";
-            tempPath = `${absolute}${tempSuffix}.${process.pid}.${randomBytes(6).toString("hex")}`;
-            writeFileSync(tempPath, content, {
-                flag: "wx",
-                mode: options?.mode ?? 0o600,
+            writePrivateFileAtomic(absolute, content, {
+                mode: options?.mode,
+                tempSuffix: options?.tempSuffix,
+                rootDir: configDir,
             });
-            renameSync(tempPath, absolute);
             return { ok: true };
         } catch (err) {
-            const errCode = (err as NodeJS.ErrnoException).code;
-            if (tempPath !== undefined && errCode !== "EEXIST") {
-                try {
-                    unlinkSync(tempPath);
-                } catch (unlinkErr) {
-                    const unlinkCode = (unlinkErr as NodeJS.ErrnoException).code;
-                    if (unlinkCode !== "ENOENT") {
-                        // Ignore secondary cleanup failure so the primary I/O error is returned.
-                    }
-                }
-            }
             return {
                 ok: false,
                 code: "io_error",

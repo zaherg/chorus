@@ -1,16 +1,14 @@
-import { chmodSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { z } from "zod/v4";
 
 import { getErrorMessage } from "@/utils/helpers";
+import { ensurePrivateDir, PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileExclusive } from "@/utils/private-fs";
 
 const getConfigDir = () => resolve(homedir(), ".config", "chorus");
 const getConfigPath = () => resolve(getConfigDir(), "config.json");
-const CONFIG_DIR_MODE = 0o700;
-const CONFIG_FILE_MODE = 0o600;
-const supportsPosixModes = process.platform !== "win32";
 
 export const MAX_TIMEOUT_MS = 2_147_483_647;
 
@@ -78,25 +76,15 @@ export const wasExpandedFromEnv = (config: ChorusConfig, key: string): boolean =
 
 export const getConfigPaths = () => ({ baseDir: getConfigDir(), configPath: getConfigPath() });
 
-const ensurePrivateMode = (path: string, mode: number, label: string) => {
-    if (!supportsPosixModes) return;
-
-    try {
-        const st = lstatSync(path);
-        if (st.isSymbolicLink()) return;
-        if ((st.mode & 0o777) !== mode) {
-            chmodSync(path, mode);
-        }
-    } catch (err) {
-        process.stderr.write(
-            `Warning: could not set private permissions on ${label} ${path}: ${getErrorMessage(err)}\n`,
-        );
-    }
+const warnPrivateModeError = (label: string, path: string) => (err: unknown) => {
+    process.stderr.write(`Warning: could not set private permissions on ${label} ${path}: ${getErrorMessage(err)}\n`);
 };
 
 const ensureConfigDirectories = (configDir: string) => {
-    mkdirSync(configDir, { mode: CONFIG_DIR_MODE, recursive: true });
-    ensurePrivateMode(configDir, CONFIG_DIR_MODE, "config directory");
+    ensurePrivateDir(configDir, {
+        mode: PRIVATE_DIR_MODE,
+        onError: warnPrivateModeError("config directory", configDir),
+    });
 };
 
 const resolveEnvVars = (raw: Record<string, unknown>) => {
@@ -156,26 +144,16 @@ const DEFAULT_CONFIG = {
     allow_insecure_custom: false,
 };
 
-const isErrnoException = (err: unknown): err is NodeJS.ErrnoException => {
-    return err instanceof Error && "code" in err;
-};
-
 const writeDefaultConfig = (configPath: string) => {
-    try {
-        writeFileSync(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2), {
-            flag: "wx",
-            mode: CONFIG_FILE_MODE,
-        });
-    } catch (err) {
-        if (isErrnoException(err) && err.code === "EEXIST") {
-            ensurePrivateMode(configPath, CONFIG_FILE_MODE, "config file");
-            return;
-        }
-        throw err;
+    const created = writePrivateFileExclusive(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2), {
+        mode: PRIVATE_FILE_MODE,
+        onError: warnPrivateModeError("config file", configPath),
+    });
+    if (created) {
+        process.stderr.write(
+            `Default config written to ${configPath}. Edit it to set your API keys and preferences.\n`,
+        );
     }
-
-    ensurePrivateMode(configPath, CONFIG_FILE_MODE, "config file");
-    process.stderr.write(`Default config written to ${configPath}. Edit it to set your API keys and preferences.\n`);
 };
 
 export const loadConfig = async () => {

@@ -1,15 +1,4 @@
-import {
-    chmodSync,
-    closeSync,
-    existsSync,
-    lstatSync,
-    mkdirSync,
-    openSync,
-    renameSync,
-    rmSync,
-    statSync,
-    writeSync,
-} from "node:fs";
+import { existsSync, lstatSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -23,6 +12,12 @@ import {
 } from "@logtape/logtape";
 
 import { getConfigPaths } from "@/config";
+import {
+    appendPrivateFileNoFollow,
+    ensurePrivateDir,
+    ensurePrivateFile,
+    touchPrivateFileNoFollow,
+} from "@/utils/private-fs";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -186,31 +181,6 @@ export const redactSecrets = (text: string) => {
     return text;
 };
 
-const ensurePrivateDir = (dirPath: string): void => {
-    mkdirSync(dirPath, { recursive: true, mode: 0o700 });
-    if (process.platform === "win32") return;
-    try {
-        const stats = lstatSync(dirPath);
-        if (!stats.isSymbolicLink() && (stats.mode & 0o777) !== 0o700) {
-            chmodSync(dirPath, 0o700);
-        }
-    } catch {
-        // Ignore platform errors when inspecting directory mode
-    }
-};
-
-const ensurePrivateFile = (filePath: string): void => {
-    if (process.platform === "win32") return;
-    try {
-        const stats = lstatSync(filePath);
-        if (!stats.isSymbolicLink() && (stats.mode & 0o777) !== 0o600) {
-            chmodSync(filePath, 0o600);
-        }
-    } catch {
-        // Ignore missing files or platform errors
-    }
-};
-
 const rotateLogFile = (filePath: string, maxFiles: number): void => {
     if (maxFiles <= 0) {
         rmSync(filePath, { force: true });
@@ -220,6 +190,11 @@ const rotateLogFile = (filePath: string, maxFiles: number): void => {
         const src = i === 1 ? filePath : `${filePath}.${i - 1}`;
         const dst = `${filePath}.${i}`;
         if (!existsSync(src)) continue;
+        try {
+            if (lstatSync(src).isSymbolicLink()) continue;
+        } catch {
+            continue;
+        }
         if (i === maxFiles && existsSync(dst)) {
             rmSync(dst, { force: true });
         }
@@ -238,32 +213,27 @@ export const createRotatingFileSink = (
     filePath: string,
     { maxSize, maxFiles, formatter }: RotatingFileSinkOptions,
 ): Sink => {
-    const initFd = openSync(filePath, "a", 0o600);
-    closeSync(initFd);
-    ensurePrivateFile(filePath);
+    touchPrivateFileNoFollow(filePath);
 
     return (record) => {
         const formatted = formatter(record);
         const chunk = Buffer.from(formatted, "utf8");
 
         let currentSize = 0;
+        let isSymlink = false;
         try {
-            currentSize = statSync(filePath).size;
+            const st = lstatSync(filePath);
+            isSymlink = st.isSymbolicLink();
+            currentSize = isSymlink ? 0 : st.size;
         } catch {
             currentSize = 0;
         }
 
-        if (currentSize > 0 && currentSize + chunk.byteLength > maxSize) {
+        if (!isSymlink && currentSize > 0 && currentSize + chunk.byteLength > maxSize) {
             rotateLogFile(filePath, maxFiles);
         }
 
-        const fd = openSync(filePath, "a", 0o600);
-        try {
-            writeSync(fd, chunk);
-        } finally {
-            closeSync(fd);
-        }
-        ensurePrivateFile(filePath);
+        appendPrivateFileNoFollow(filePath, chunk);
     };
 };
 

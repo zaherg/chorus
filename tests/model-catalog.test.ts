@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+    chmodSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -681,6 +691,66 @@ describe("model-catalog", () => {
                 expect(entries).toEqual(["catalog.json"]);
             } finally {
                 rmSync(tempConfigDir, { recursive: true, force: true });
+            }
+        });
+
+        test("makeLocalFileWriter repairs pre-existing overly permissive cache directory permissions to 0700", () => {
+            if (process.platform === "win32") return;
+
+            const tempConfigDir = mkdtempSync(join(tmpdir(), "chorus-cache-perm-"));
+            try {
+                const cacheDir = join(tempConfigDir, "models-cache");
+                mkdirSync(cacheDir, { recursive: true, mode: 0o755 });
+                chmodSync(cacheDir, 0o755);
+
+                const writer = makeLocalFileWriter(tempConfigDir);
+                const writeResult = writer(CATALOG_RELATIVE_PATH, '{"ok":true}', { mode: 0o600, tempSuffix: ".tmp" });
+
+                expect(writeResult.ok).toBe(true);
+                expect(statSync(cacheDir).mode & 0o777).toBe(0o700);
+                expect(statSync(join(cacheDir, "catalog.json")).mode & 0o777).toBe(0o600);
+            } finally {
+                rmSync(tempConfigDir, { recursive: true, force: true });
+            }
+        });
+
+        test("makeLocalFileReader and makeLocalFileWriter reject symlinks escaping configDir", () => {
+            if (process.platform === "win32") return;
+
+            const tempRoot = mkdtempSync(join(tmpdir(), "chorus-cache-symlink-"));
+            try {
+                const configDir = join(tempRoot, "config");
+                const outsideDir = join(tempRoot, "outside");
+                mkdirSync(configDir, { recursive: true });
+                mkdirSync(outsideDir, { recursive: true });
+                const outsideFile = join(outsideDir, "secret.json");
+                writeFileSync(outsideFile, '{"secret":"do-not-read"}', "utf-8");
+
+                // 1. Symlinked cache directory pointing outside configDir
+                symlinkSync(outsideDir, join(configDir, "models-cache"));
+                const writer = makeLocalFileWriter(configDir);
+                const reader = makeLocalFileReader(configDir);
+
+                const dirWrite = writer(CATALOG_RELATIVE_PATH, '{"escaped":true}', { mode: 0o600 });
+                expect(dirWrite.ok).toBe(false);
+                expect(readdirSync(outsideDir)).toEqual(["secret.json"]);
+
+                const dirRead = reader("models-cache/secret.json");
+                expect(dirRead).toEqual({ ok: false, code: "io_error" });
+
+                // 2. Real cache directory with a symlinked file pointing outside configDir
+                rmSync(join(configDir, "models-cache"));
+                mkdirSync(join(configDir, "models-cache"), { recursive: true });
+                symlinkSync(outsideFile, join(configDir, CATALOG_RELATIVE_PATH));
+
+                const fileRead = reader(CATALOG_RELATIVE_PATH);
+                expect(fileRead).toEqual({ ok: false, code: "io_error" });
+
+                const fileWrite = writer(CATALOG_RELATIVE_PATH, '{"overwritten":true}', { mode: 0o600 });
+                expect(fileWrite.ok).toBe(false);
+                expect(readFileSync(outsideFile, "utf-8")).toBe('{"secret":"do-not-read"}');
+            } finally {
+                rmSync(tempRoot, { recursive: true, force: true });
             }
         });
     });

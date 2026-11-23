@@ -1,5 +1,15 @@
 import { describe, expect, it, mock } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import * as nodeOs from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -247,6 +257,51 @@ describe("configureLogging", () => {
                 expect(statSync(`${logPath}.1`).mode & 0o777).toBe(0o600);
                 expect(statSync(`${logPath}.2`).mode & 0o777).toBe(0o600);
             }
+        } finally {
+            rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses to follow a symlinked log file on init or write", () => {
+        if (process.platform === "win32") return;
+
+        const tempDir = mkdtempSync(join(tmpdir(), "chorus-logger-symlink-"));
+        try {
+            const targetPath = join(tempDir, "outside-target.log");
+            const logPath = join(tempDir, "error.log");
+            writeFileSync(targetPath, "original\n", "utf-8");
+            symlinkSync(targetPath, logPath);
+
+            expect(() =>
+                createRotatingFileSink(logPath, {
+                    maxSize: 1024,
+                    maxFiles: 2,
+                    formatter: getJsonLinesFormatter(),
+                }),
+            ).toThrow();
+            expect(readFileSync(targetPath, "utf-8")).toBe("original\n");
+
+            // Also verify replacement with a symlink after initialization is rejected
+            rmSync(logPath);
+            const sink = createRotatingFileSink(logPath, {
+                maxSize: 1024,
+                maxFiles: 2,
+                formatter: getJsonLinesFormatter(),
+            });
+            rmSync(logPath);
+            symlinkSync(targetPath, logPath);
+
+            expect(() =>
+                sink({
+                    category: ["chorus"],
+                    level: "error",
+                    message: ["should not write through symlink"],
+                    rawMessage: "should not write through symlink",
+                    timestamp: Date.now(),
+                    properties: {},
+                }),
+            ).toThrow();
+            expect(readFileSync(targetPath, "utf-8")).toBe("original\n");
         } finally {
             rmSync(tempDir, { recursive: true, force: true });
         }
