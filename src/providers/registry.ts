@@ -7,10 +7,11 @@ import { createOpenRouter, type OpenRouterProviderOptions, openrouter } from "@o
 import { APICallError, generateText as aiGenerateText, type JSONValue, type LanguageModel, RetryError } from "ai";
 import { z } from "zod/v4";
 
-import { type ChorusConfig, MAX_TIMEOUT_MS, wasExpandedFromEnv } from "@/config";
+import { type ChorusConfig, DEFAULT_PROVIDER_TIMEOUT_MS, wasExpandedFromEnv } from "@/config";
 import { classifyInput, resolveRoute } from "@/providers/resolve-route";
 import type { BrokerModelInfo, ModelsListResponse, ProviderId } from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
+import { clampTimeoutMs, isAbortLikeError } from "@/utils/async";
 import { estimateTokenCount } from "@/utils/helpers";
 import { logger } from "@/utils/logger";
 import { createSafeCustomFetch, customProviderBaseUrl, defaultDnsResolve } from "./custom-url";
@@ -51,15 +52,8 @@ export interface GenerateTextResult {
     };
 }
 
-const DEFAULT_PROVIDER_TIMEOUT_MS = 1_800_000;
-
-const providerTimeoutMs = (config: ChorusConfig) => {
-    const raw = config.provider_timeout_ms;
-    if (!Number.isFinite(raw) || raw <= 0) {
-        return DEFAULT_PROVIDER_TIMEOUT_MS;
-    }
-    return Math.min(Math.trunc(raw), MAX_TIMEOUT_MS);
-};
+const providerTimeoutMs = (config: ChorusConfig) =>
+    clampTimeoutMs(config.provider_timeout_ms, DEFAULT_PROVIDER_TIMEOUT_MS);
 
 // === Provider configuration checks ===
 
@@ -255,10 +249,6 @@ const createProviderAbortSignal = (parent: AbortSignal | undefined, timeoutMs: n
         getAbortReason: (): ProviderAbortReason => reason,
         signal: controller.signal,
     };
-};
-
-const isAbortLikeError = (error: unknown): boolean => {
-    return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 };
 
 const isDeterministicCustomUrlError = (error: unknown): boolean => {

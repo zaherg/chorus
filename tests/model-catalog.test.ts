@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
     chmodSync,
     mkdirSync,
@@ -235,6 +235,35 @@ describe("model-catalog", () => {
             if (!abortResult.ok) {
                 expect(abortResult.error.code).toBe("timeout");
                 expect(abortResult.error.message).toContain("text read aborted");
+            }
+        });
+
+        test("clamps non-positive, non-finite, and oversized timeoutMs and classifies wrapped TimeoutError causes", async () => {
+            const timeoutSpy = spyOn(AbortSignal, "timeout");
+            try {
+                for (const badTimeout of [Number.NaN, -1, 0, 0.5]) {
+                    const { fn } = makeFetch(okJsonResponse(fixture));
+                    const res = await fetchCatalog(fn, () => new Date(), { timeoutMs: badTimeout });
+                    expect(res.ok).toBe(true);
+                    expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
+                }
+
+                const { fn: oversizedFn } = makeFetch(okJsonResponse(fixture));
+                const oversizedRes = await fetchCatalog(oversizedFn, () => new Date(), { timeoutMs: 9_999_999_999 });
+                expect(oversizedRes.ok).toBe(true);
+                expect(timeoutSpy).toHaveBeenLastCalledWith(2_147_483_647);
+            } finally {
+                timeoutSpy.mockRestore();
+            }
+
+            const wrappedTimeout = new TypeError("fetch failed", {
+                cause: new DOMException("The operation timed out.", "TimeoutError"),
+            });
+            const { fn: failingFetch } = makeFetch(wrappedTimeout);
+            const wrappedResult = await fetchCatalog(failingFetch);
+            expect(wrappedResult.ok).toBe(false);
+            if (!wrappedResult.ok) {
+                expect(wrappedResult.error.code).toBe("timeout");
             }
         });
     });

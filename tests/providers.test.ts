@@ -724,6 +724,55 @@ describe("ProviderRegistry", () => {
             expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 2_147_483_647);
         });
 
+        test("falls back on sub-millisecond fractional provider_timeout_ms and classifies wrapped TimeoutError causes", async () => {
+            const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
+            const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
+            spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
+
+            const fractionalRegistry = createProviderRegistry(
+                testConfig({
+                    provider_timeout_ms: 0.5,
+                    openrouter_api_key: "openrouter-key",
+                }),
+                {
+                    generateTextFn: async () =>
+                        ({
+                            response: { modelId: "openai/gpt-5.2", timestamp: new Date() },
+                            text: "ok",
+                            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                        }) as never,
+                },
+            );
+            const fractionalResult = await fractionalRegistry.generateText(
+                "openrouter/openai/gpt-5.2",
+                "hello",
+                undefined,
+                {
+                    catalog: openrouterCatalog(),
+                    configuredProviders: openrouterConfigured(),
+                },
+            );
+            expect(fractionalResult.ok).toBeTrue();
+            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 1_800_000);
+
+            const wrappedRegistry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {
+                generateTextFn: async () => {
+                    throw new TypeError("fetch failed", {
+                        cause: new DOMException("The operation timed out.", "TimeoutError"),
+                    });
+                },
+            });
+            const wrappedResult = await wrappedRegistry.generateText("openrouter/openai/gpt-5.2", "hello", undefined, {
+                catalog: openrouterCatalog(),
+                configuredProviders: openrouterConfigured(),
+            });
+            expect(wrappedResult.ok).toBeFalse();
+            if (!wrappedResult.ok) {
+                expect(wrappedResult.error.type).toBe("timeout");
+                expect(wrappedResult.error.retryable).toBeTrue();
+            }
+        });
+
         test("distinguishes caller abortSignal cancellation from internal timeout", async () => {
             const parentController = new AbortController();
             const cancelRegistry = createProviderRegistry(testConfig({ openrouter_api_key: "openrouter-key" }), {

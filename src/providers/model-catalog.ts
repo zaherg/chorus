@@ -38,6 +38,7 @@ import {
     ProviderModelEntrySchema,
     providerIdValues,
 } from "@/types/providers";
+import { clampTimeoutMs, isAbortLikeError } from "@/utils/async";
 import { getErrorMessage } from "@/utils/helpers";
 import pkg from "../../package.json";
 import { getModelsDevProviderKey, isCatalogBackedProvider } from "./provider-map";
@@ -131,13 +132,6 @@ export const getMetadataPath = (configDir: string) => resolve(getModelsCacheDir(
 
 // === Fetch ===
 
-const isAbortLikeError = (err: unknown) => {
-    if (!(err instanceof Error)) {
-        return false;
-    }
-    return err.name === "AbortError" || err.name === "TimeoutError";
-};
-
 export const fetchCatalog = async (
     fetchFn: FetchFn,
     now: () => Date = () => new Date(),
@@ -150,7 +144,7 @@ export const fetchCatalog = async (
     if (options.etag) {
         headers["If-None-Match"] = options.etag;
     }
-    const signal = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS);
+    const signal = AbortSignal.timeout(clampTimeoutMs(options.timeoutMs, DEFAULT_FETCH_TIMEOUT_MS));
 
     let response: Response;
     try {

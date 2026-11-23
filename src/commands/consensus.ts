@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 
 import { printHelp } from "@/cli";
-import { getConfigPaths, loadConfig, MAX_TIMEOUT_MS } from "@/config";
+import { DEFAULT_CLI_TIMEOUT_MS, getConfigPaths, loadConfig } from "@/config";
 import { runConsensus } from "@/consensus";
 import { makeLocalFileReader, makeLocalFileWriter } from "@/providers/cache-fs";
 import { loadCatalog } from "@/providers/model-catalog";
@@ -25,6 +25,7 @@ import {
 } from "@/types/consensus";
 import { type BrokerModelInfo, providerIdValues } from "@/types/providers";
 import type { Result, ToolError } from "@/types/tools";
+import { clampTimeoutMs } from "@/utils/async";
 import { getErrorMessage } from "@/utils/helpers";
 import { configureLogging } from "@/utils/logger";
 import { parseCliOptions } from "./cli-options";
@@ -44,7 +45,7 @@ export type ReadableStdin = AsyncIterable<Buffer | Uint8Array | string> & {
 /** Reads UTF-8 text from stdin with bounded total byte size and an inactivity/overall timeout. */
 export const readStdinBounded = async (stream: ReadableStdin, options: ReadStdinOptions = {}): Promise<string> => {
     const maxBytes = options.maxBytes ?? DEFAULT_STDIN_MAX_BYTES;
-    const timeoutMs = options.timeoutMs ?? DEFAULT_STDIN_TIMEOUT_MS;
+    const timeoutMs = clampTimeoutMs(options.timeoutMs, DEFAULT_STDIN_TIMEOUT_MS);
 
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -665,7 +666,7 @@ export const runConsensusCommand = async (args: string[]) => {
     };
     process.on("SIGINT", onSigint);
     process.on("SIGTERM", onSigterm);
-    const cliTimeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(1, Math.trunc(config.cli_timeout_ms)));
+    const cliTimeoutMs = clampTimeoutMs(config.cli_timeout_ms, DEFAULT_CLI_TIMEOUT_MS);
     const cliTimeout = setTimeout(() => abortController.abort(), cliTimeoutMs);
     try {
         result = await runConsensus({

@@ -4,13 +4,16 @@ import { resolve } from "node:path";
 
 import { z } from "zod/v4";
 
+import { MAX_TIMEOUT_MS } from "@/utils/async";
 import { getErrorMessage } from "@/utils/helpers";
 import { ensurePrivateDir, PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileExclusive } from "@/utils/private-fs";
 
 const getConfigDir = () => resolve(homedir(), ".config", "chorus");
 const getConfigPath = () => resolve(getConfigDir(), "config.json");
 
-export const MAX_TIMEOUT_MS = 2_147_483_647;
+export { MAX_TIMEOUT_MS };
+export const DEFAULT_CLI_TIMEOUT_MS = 2_700_000;
+export const DEFAULT_PROVIDER_TIMEOUT_MS = 1_800_000;
 
 const ENV_VAR_PATTERN = /\$(?:\{([A-Z_][A-Z0-9_]*)\}|([A-Z_][A-Z0-9_]*))/g;
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
@@ -31,8 +34,8 @@ const positiveIntSchema = (defaultValue: number, max = MAX_TIMEOUT_MS) =>
 
 const ChorusConfigSchema = z
     .object({
-        cli_timeout_ms: positiveIntSchema(2_700_000),
-        provider_timeout_ms: positiveIntSchema(1_800_000),
+        cli_timeout_ms: positiveIntSchema(DEFAULT_CLI_TIMEOUT_MS),
+        provider_timeout_ms: positiveIntSchema(DEFAULT_PROVIDER_TIMEOUT_MS),
         log_level: z.enum(["debug", "info", "warn", "error"]).default("info"),
         max_concurrent_processes: positiveIntSchema(3),
         anthropic_api_key: z.string().optional(),
@@ -125,8 +128,8 @@ const resolveEnvVars = (raw: Record<string, unknown>) => {
 };
 
 const DEFAULT_CONFIG = {
-    cli_timeout_ms: 2_700_000,
-    provider_timeout_ms: 1_800_000,
+    cli_timeout_ms: DEFAULT_CLI_TIMEOUT_MS,
+    provider_timeout_ms: DEFAULT_PROVIDER_TIMEOUT_MS,
     log_level: "info",
     max_concurrent_processes: 3,
     anthropic_api_key: "",

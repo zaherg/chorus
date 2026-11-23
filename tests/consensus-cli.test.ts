@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { Readable } from "node:stream";
 
 import { runCli } from "@/cli";
@@ -2091,6 +2091,51 @@ describe("runConsensusCommand", () => {
 
         expect(sawAbort).toBe(true);
         expect(result).toBe(0);
+    });
+
+    it("clamps non-finite, non-positive, and oversized cli_timeout_ms and stdin timeoutMs values", async () => {
+        const timeoutId = 1 as unknown as ReturnType<typeof setTimeout>;
+        const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockReturnValue(timeoutId);
+        const clearTimeoutSpy = spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
+        try {
+            for (const [configured, expected] of [
+                [Number.NaN, 2_700_000],
+                [0, 2_700_000],
+                [0.5, 2_700_000],
+                [9_999_999_999, 2_147_483_647],
+            ] as const) {
+                setTimeoutSpy.mockClear();
+                stubConfig(async () => ({
+                    ...testConfig(),
+                    cli_timeout_ms: configured,
+                }));
+                stubRunConsensus(async () => defaultConsensusImpl());
+
+                const { result } = await captureOutput(() =>
+                    runConsensusCommand([
+                        "--models",
+                        "openrouter/openai/gpt-5.2,google-vertex/gemini-2.5-pro",
+                        "--prompt",
+                        "test",
+                    ]),
+                );
+                expect(result).toBe(0);
+                expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), expected);
+            }
+
+            setTimeoutSpy.mockClear();
+            const text = await readStdinBounded(Readable.from(["hello"]), { timeoutMs: 9_999_999_999 });
+            expect(text).toBe("hello");
+            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 2_147_483_647);
+
+            setTimeoutSpy.mockClear();
+            const fallbackText = await readStdinBounded(Readable.from(["hello"]), { timeoutMs: Number.NaN });
+            expect(fallbackText).toBe("hello");
+            expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 30_000);
+        } finally {
+            setTimeoutSpy.mockRestore();
+            clearTimeoutSpy.mockRestore();
+        }
     });
 
     it("emits a stderr warning when --thinking-mode is assigned to providers that ignore it", async () => {

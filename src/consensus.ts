@@ -7,6 +7,7 @@ import type {
     ParticipantResponse,
 } from "@/types/consensus";
 import type { EmbeddedFileResult } from "@/types/files";
+import { clampPositiveInt, isAbortLikeError } from "@/utils/async";
 import { embedFiles } from "@/utils/files";
 import { getErrorMessage } from "@/utils/helpers";
 import { logger } from "@/utils/logger";
@@ -112,7 +113,7 @@ const runSettledWithConcurrency = async <T, R>(
     if (items.length === 0) {
         return [];
     }
-    const safeConcurrency = Number.isFinite(maxConcurrency) ? Math.max(1, Math.trunc(maxConcurrency)) : 1;
+    const safeConcurrency = clampPositiveInt(maxConcurrency, 1);
     const limit = Math.min(items.length, safeConcurrency);
     const results = new Array<PromiseSettledResult<R>>(items.length);
     let nextIndex = 0;
@@ -145,15 +146,10 @@ const isRetryableError = (reason: unknown): boolean => {
     if (reason === "Aborted") {
         return false;
     }
-    if (reason instanceof Error) {
-        const name = reason.name;
-        if (name === "AbortError" || name === "TimeoutError") {
-            return true;
-        }
-        if ("retryable" in reason && typeof (reason as Record<string, unknown>).retryable === "boolean") {
-            return (reason as Record<string, unknown>).retryable as boolean;
-        }
-    } else if (reason !== null && typeof reason === "object" && "retryable" in reason) {
+    if (isAbortLikeError(reason)) {
+        return true;
+    }
+    if (reason !== null && typeof reason === "object" && "retryable" in reason) {
         const val = (reason as Record<string, unknown>).retryable;
         if (typeof val === "boolean") {
             return val;
